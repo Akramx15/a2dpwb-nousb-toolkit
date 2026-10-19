@@ -37,7 +37,7 @@ chipset driver work that makes an off-the-shelf RTL8852BU usable on Windows.
 The findings here (the missing-firmware root cause of the misleading
 `WinUSB error 50`, the chip-table gap for PID `0x4853`, and the first-pairing
 behaviour of LE-Audio-capable headsets) were reported upstream:
-<!-- UPSTREAM_ISSUE_URL -->
+<https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues/81>
 The draft is kept in `docs/UPSTREAM-ISSUE.md`.
 
 **Licensing:** personal, non-commercial use only — see `NOTICE.md`. A2DPWB

@@ -78,4 +78,4 @@ end-of-run summary. The headset address is redacted as `<HEADSET_MAC>`, the
 link key is not included, and there are no personal paths.
 
 The companion toolkit used for the checks, the firmware fetch and the
-reproducible procedure is at <!-- TOOLKIT_REPO_URL -->.
+reproducible procedure is at <https://github.com/Akramx15/a2dpwb-nousb-toolkit>.
