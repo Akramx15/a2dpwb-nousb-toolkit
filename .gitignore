@@ -1,0 +1,10 @@
+# The upstream reference clone is read-only and never committed here.
+upstream/
+
+# Ephemeral emulator state and captured logs/artifacts.
+.emu-config/
+artifacts/
+*.log
+
+# Local scratch space for patch generation and firmware downloads.
+.fwcache/
