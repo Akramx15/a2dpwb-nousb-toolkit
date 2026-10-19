@@ -15,10 +15,34 @@ Toolkit layout (this repo):
 | `scripts/doctor.ps1` | Read-only diagnosis + verdict |
 | `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app |
 | `vendor-patches/` | The patched copies the diffs were generated from |
-| `docs/` | Build-from-source guide and decisions (ADRs) |
+| `docs/` | Build-from-source guide, decisions (ADRs) and the drafted upstream issue |
 
 `../upstream/` is the read-only reference clone of v2.0.1. **Never edit or
 commit it.**
+
+## Credits & acknowledgements
+
+This toolkit exists because of **A2DP-Windows-Bridge**, written by
+**[SeiyaFunaokaJP](https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge)**.
+Thank you for building a Windows A2DP source that actually reaches LDAC and
+for publishing it. The upstream project is the authoritative source: prefer
+its releases, and report codec or runtime bugs upstream rather than here.
+
+The Bluetooth work stands on **BTstack** by **BlueKitchen GmbH**, which drives
+the controller in user mode over WinUSB, and on the **linux-firmware**
+project, which carries the Realtek `rtl8852bu_fw` / `rtl8852bu_config` blobs
+used by BTstack's Realtek chipset driver. Thanks also to the Realtek/BTstack
+chipset driver work that makes an off-the-shelf RTL8852BU usable on Windows.
+
+The findings here (the missing-firmware root cause of the misleading
+`WinUSB error 50`, the chip-table gap for PID `0x4853`, and the first-pairing
+behaviour of LE-Audio-capable headsets) were reported upstream:
+<!-- UPSTREAM_ISSUE_URL -->
+The draft is kept in `docs/UPSTREAM-ISSUE.md`.
+
+**Licensing:** personal, non-commercial use only — see `NOTICE.md`. A2DPWB
+embeds BTstack, whose licence does not allow commercial use or redistribution
+without a BlueKitchen licence.
 
 ## Verified working on this PC (2026-10-19)
 
