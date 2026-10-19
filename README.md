@@ -8,6 +8,7 @@ Toolkit layout (this repo):
 
 | Path | What it is |
 |:--|:--|
+| `scripts/stream.ps1` | **Daily-use launcher**: streams to the headphones with the installed core |
 | `scripts/fetch-realtek-fw.ps1` | Downloads + validates the Realtek firmware into the A2DPWB config folder |
 | `scripts/usb-driver.ps1` | Wraps `a2dpwb-driver.exe` (assign / restore) and `pnputil` (restart) |
 | `scripts/run-emulator.ps1` | Zero-hardware end-to-end run against the Bumble virtual sink |
@@ -18,6 +19,115 @@ Toolkit layout (this repo):
 
 `../upstream/` is the read-only reference clone of v2.0.1. **Never edit or
 commit it.**
+
+## Verified working on this PC (2026-10-19)
+
+Real hardware, real radio, classic A2DP over the internal RTL8852BU. This is
+the current, verified result — not a plan.
+
+| Check | Evidence |
+|:--|:--|
+| Device | the headset, `<HEADSET_MAC>`, classic A2DP (LE Audio switched **off** on the headset) |
+| Codec discovery | `remote supports LDAC (SEID 3, [2D, 01, 00, 00, AA, 00, 3C, 07])` → `codec selected: LDAC` |
+| Codec setup | `LDAC: initialized (rate=48000, ch=2, 24-bit, quality=High, transport mtu=895, bitrate=990 kbps)` |
+| State | `state Streaming: Connected` |
+| 40 s test tone | `Sent 7507 media packets (5052211 bytes), 0 dropped` |
+| 25 s system loopback | `Sent 4701 media packets (3163773 bytes), 0 dropped` |
+| User confirmation | A song played on the PC came out of the headphones **and** the PC speakers, excellent quality, no dropouts |
+
+### Daily use: one command
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1
+```
+
+That uses the verified defaults: device `<HEADSET_MAC>`, LDAC, quality
+`hq`, system-loopback capture, until Ctrl+C. Variants:
+
+```powershell
+# 10 s test tone (1 kHz left / 1.5 kHz right) to check the link
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -TestTone -Duration 10
+
+# normal music, 990 kbps LDAC, stop with Ctrl+C
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Codec ldac -Quality hq
+
+# start detached (prints the PID and the Stop-Process command)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Background
+
+# the exact raw command the successful run used
+& "$env:LOCALAPPDATA\A2DP Windows Bridge\a2dpwb-core.exe" --cli -d <HEADSET_MAC> -c ldac -q hq --test-tone --duration 40
+```
+
+`stream.ps1` only passes flags that exist in
+`upstream/app/src/core/src/cli.rs`; run `... -File scripts\stream.ps1 -Help`
+for the full parameter list.
+
+### First-time pairing (do this once)
+
+The headset was paired with the Windows Bluetooth stack before. Two different
+L2CAP result codes explained the first failures:
+
+| Code | BTstack constant | Meaning on this PC | Fix |
+|:--|:--|:--|:--|
+| `0x66` | `L2CAP_CONNECTION_RESPONSE_RESULT_REFUSED_SECURITY` | The headset still held the link key created by Windows, so A2DPWB's SSP authentication was refused | Put the headset in pairing mode so it creates a new key |
+| `0x67` | `L2CAP_CONNECTION_RESPONSE_RESULT_REFUSED_RESOURCES` | The headset's AVDTP signaling channel was already occupied (phone still connected, LE Audio on) | Disconnect the phone and switch LE Audio off |
+
+The procedure that worked:
+
+1. Switch **LE Audio OFF** on the headset (the maker's app). This is
+   what made the classic A2DP path work.
+2. **Disconnect the phone** (the headset's multipoint link) so the AVDTP
+   signaling channel is free.
+3. Put the headset in **pairing mode** (hold the power button until the
+   indicator flashes twice).
+4. Run `scripts\stream.ps1` (or the raw command above).
+
+### After the first time: no pairing mode needed
+
+The link key is persisted, so later runs just work:
+
+* `%APPDATA%\A2DPWB\link_keys.txt` contains
+  `<HEADSET_MAC> REDACTED_LINK_KEY 4`
+* `%APPDATA%\A2DPWB\devices.txt` lists `<HEADSET_MAC>|`
+
+Turn the headset on, keep LE Audio off, and run `scripts\stream.ps1`. The
+user observed exactly this: "the first time is the test, then it just works".
+
+### Why the PC speakers play too (and how to fix it)
+
+The default capture mode is a WASAPI **loopback of the default output device**
+(`Speakers (Realtek(R) Audio)`). Loopback taps the mix; it does not mute it.
+So Windows still renders the song to the speakers while A2DPWB encodes the
+same audio for the headphones. That is expected, not a fault.
+
+To hear the audio **only in the headphones**, capture a virtual render device
+instead (optional, one-time setup):
+
+1. Install a virtual cable such as [VB-CABLE](https://vb-audio.com/Cable/)
+   and reboot if the installer asks.
+2. Find the render endpoint ID:
+
+   ```powershell
+   Get-PnpDevice -Class AudioEndpoint -Status OK |
+     Where-Object { $_.InstanceId -like 'SWD\MMDEVAPI\{0.0.0.*' } |
+     Select-Object FriendlyName, @{n='AudioDeviceId';e={ $_.InstanceId -replace '^SWD\\MMDEVAPI\\','' }}
+   ```
+
+3. Run the stream against `CABLE Input`:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 `
+     -Mode virtual -AudioDevice '{0.0.0.00000000}.{your-cable-endpoint-guid}' -Codec ldac
+   ```
+
+   The core makes that device the default output for the session
+   (`auto_switch`) and restores the previous default when the stream stops.
+   If you prefer to set it yourself, choose `CABLE Input` as the default in
+   **Settings > System > Sound > Output** before starting.
+
+`-Mode app -App <exe>` captures one application's process tree, but that app
+still plays on the default output too; only virtual-device mode removes the
+speaker copy.
 
 ## 1. What A2DP-Windows-Bridge does
 
@@ -62,19 +172,21 @@ not need the app table: it already loads `rtl8852bu_fw`.
 
 ## 4. Current state of this PC (2026-10-19)
 
+Historical setup state; the verified streaming result is in the top section.
+
 | Item | Value |
 |:--|:--|
 | Adapter instance | `USB\VID_0BDA&PID_4853\00E04C0000XX` |
 | Current driver | `winusb.inf` / service `WINUSB` (WinUSB Device) |
 | Previous driver (recorded) | `oem197.inf`, Realtek, service `BTHUSB`, `reboot_required: true` |
-| WinUSB open result | `failed to initialize WinUSB (error 50)` until reboot |
+| WinUSB open result | **opens** (the former `failed to initialize WinUSB (error 50)` was cleared by the firmware install/reconnect) |
 | Firmware in `%APPDATA%\A2DPWB` | **present and shape-valid** (129,733-byte firmware, 6-byte config, installed 20:20) |
 | App binaries | `a2dpwb-core.exe`, `a2dpwb-driver.exe`, `a2dpwb.exe` present |
 | Toolchain | Rust 1.97, Node 24; **no MSVC C++ compiler** in `C:\BuildTools`; no `pnpm`; no `pwsh` |
 
-Error 50 (`ERROR_NOT_SUPPORTED`) on this Realtek part is expected **after**
-the first WinUSB binding: Windows reports that the device needs a restart
-before the WinUSB interface is usable. Reboot, then stream.
+Error 50 (`ERROR_NOT_SUPPORTED`) is what this Realtek part reports **after**
+the first WinUSB binding until Windows can restart the interface. It is no
+longer the state of this PC: the adapter has opened and streamed LDAC.
 
 ## 5. Recovery: give the adapter back to Windows
 
@@ -104,17 +216,20 @@ pending reboot.
 # 2. take the adapter (UAC); reboot if it reports reboot_required: true
 powershell -ExecutionPolicy Bypass -File scripts\usb-driver.ps1 -Mode assign -Auto
 
-# 3. run the UI, or the CLI directly
+# 3. run the UI, the launcher, or the core CLI directly
 & "$env:LOCALAPPDATA\A2DP Windows Bridge\a2dpwb.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1
 & "$env:LOCALAPPDATA\A2DP Windows Bridge\a2dpwb-core.exe" --cli -d AA:BB:CC:DD:EE:FF
 # quick smoke test without headphones:
-& "$env:LOCALAPPDATA\A2DP Windows Bridge\a2dpwb-core.exe" --cli -d AA:BB:CC:DD:EE:FF --test-tone --duration 10
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -TestTone -Duration 10
 
 # 4. when done, restore (section 5)
 ```
 
 With one adapter, A2DPWB opens it automatically; `-u` selects one when
-several WinUSB adapters exist. Audio capture defaults to system loopback.
+several WinUSB adapters exist. Audio capture defaults to system loopback
+(so the PC speakers play too — see the verified section for virtual-device
+mode).
 
 ## 7. Firmware preparation (once)
 
@@ -175,9 +290,10 @@ action" is the one thing to do), `2` = the doctor itself failed.
    with C++" workload (`cl.exe` absent), so any `cargo build` of the C parts
    fails. The happy path uses the installed v2.0.1 binaries; see
    `docs/BUILD-FOR-SOURCE.md` before building.
-2. **WinUSB error 50 until reboot.** Expected after the first `assign`; the
-   record says `reboot_required: true`. Reboot (or `usb-driver.ps1 restart`
-   elevated) before expecting a working stream.
+2. **WinUSB error 50 after a fresh `assign`.** Expected until the interface
+   can restart; the record says `reboot_required: true`. Reboot (or
+   `usb-driver.ps1 restart` elevated) before expecting a stream. On this PC
+   the adapter is past that state and LDAC is verified.
 3. **Firmware version.** The firmware currently installed is shape-valid but
    not the exact build the toolkit's mirrors serve; if BTstack fails to boot,
    re-run `fetch-realtek-fw.ps1 -Force` to install the mirror build, then

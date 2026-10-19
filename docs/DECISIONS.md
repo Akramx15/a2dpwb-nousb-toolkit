@@ -81,3 +81,55 @@ is built. A build requires step 1 of `BUILD-FOR-SOURCE.md`, plus `corepack
 enable pnpm` and PowerShell 7 for the UI.
 
 **Status.** Accepted.
+
+## D5 - Default capture is system loopback, so the PC speakers also play
+
+**Context.** With no `-m`, the core captures a WASAPI loopback of the
+**default output device** (on this PC `Speakers (Realtek(R) Audio)`). Loopback
+taps the render mix; it does not mute the endpoint. The verified 2026-10-19
+session therefore played the song from the headphones **and** the PC speakers
+at the same time. That is the intended behaviour of `-m loopback`, not a bug.
+
+**Decision.** Keep system loopback as the zero-setup default
+(`scripts\stream.ps1`), and document that the speakers still play. Offer
+virtual-device mode as the opt-in alternative: install a virtual cable
+(e.g. VB-CABLE), then use
+`scripts\stream.ps1 -Mode virtual -AudioDevice <endpoint-id>`. The CLI passes
+`auto_switch: true`, so the core makes the virtual device the default output
+for the session and restores the previous default when the stream stops. A
+user who prefers can set `CABLE Input` as the default in Windows Sound
+settings; the CLI's switch is then a no-op.
+
+**Consequences.** The one-command path works with no extra software, at the
+cost of a duplicate speaker copy. Virtual-device mode removes that copy but
+needs a third-party virtual cable, and anything playing to a non-default
+endpoint (or in exclusive mode) is still not captured. If the core is killed
+hard while the guard is active, the virtual device can remain the default;
+restore it in Sound settings.
+
+**Status.** Accepted.
+
+## D6 - Classic A2DP needs LE Audio off and the phone disconnected
+
+**Context.** The the headset is paired with both Windows and a phone, and its
+LE Audio mode was on. The first A2DPWB attempts failed with two different
+L2CAP result codes, both explained by upstream/BTstack constants:
+
+* `0x66` = `L2CAP_CONNECTION_RESPONSE_RESULT_REFUSED_SECURITY`: the headset
+  still held the link key created by the Windows Bluetooth stack, so A2DPWB's
+  SSP authentication was refused.
+* `0x67` = `L2CAP_CONNECTION_RESPONSE_RESULT_REFUSED_RESOURCES`: the headset's
+  AVDTP signaling channel was already occupied (phone connected, LE Audio on).
+
+**Decision.** Document and use this first-pairing procedure: switch **LE Audio
+OFF** on the headset, **disconnect the phone**, put the headset in **pairing
+mode**, then run the stream. The link key is then persisted in
+`%APPDATA%\A2DPWB\link_keys.txt` (and the device in `devices.txt`), so later
+runs need neither pairing mode nor a new key.
+
+**Consequences.** The verified path is classic A2DP, not LE Audio. Keeping LE
+Audio off is required for the classic source path on this headset. Removing
+the headset from Windows' pairing is not needed once A2DPWB has its own key.
+If the key is ever lost, repeat the procedure (the `0x66` refusal returns).
+
+**Status.** Accepted.
