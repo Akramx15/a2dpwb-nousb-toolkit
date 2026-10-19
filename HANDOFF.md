@@ -22,8 +22,8 @@ time — not because the radio itself is special.
 | Realtek firmware loads | `INFO Realtek firmware download ran (ROM LMP subversion 0x8852)` / later `Firmware already exists` |
 | HCI comes up | `INFO HCI ready (took 102 ms)` |
 | RF link to the real headset works | `INFO HCI ACL connection established to <HEADSET_MAC>` |
-| Headphone address | `<HEADSET_MAC>` (the headset, from the old Windows pairing) |
-| First pairing succeeds | link key persisted: `<HEADSET_MAC> REDACTED_LINK_KEY 4` in `%APPDATA%\A2DPWB\link_keys.txt`; `devices.txt` lists `<HEADSET_MAC>|` |
+| Headphone address | `<HEADSET_MAC>` (the headset, from the old Windows pairing; `scripts\stream.ps1` auto-discovers it, or list it with `a2dpwb-core.exe --cli -l` / Windows Settings > Bluetooth) |
+| First pairing succeeds | link key persisted in `%APPDATA%\A2DPWB\link_keys.txt` in the format `<address> <key> <type>` (value redacted here on purpose — it is a credential); `devices.txt` lists `<HEADSET_MAC>|` |
 | Real LDAC stream | `remote supports LDAC (SEID 3, [2D, 01, 00, 00, AA, 00, 3C, 07])` → `codec selected: LDAC` |
 | LDAC setup | `LDAC: initialized (rate=48000, ch=2, 24-bit, quality=High, transport mtu=895, bitrate=990 kbps)` |
 | Stable state | `state Streaming: Connected` |

@@ -24,8 +24,13 @@ The flags map one-to-one to upstream app/src/core/src/cli.rs; nothing is
 invented. Only the options selected here are passed.
 
 .PARAMETER Device
-Bluetooth address of the headphones. Default <HEADSET_MAC>
-(the headset). Maps to -d.
+Bluetooth address of the headphones, e.g. AA:BB:CC:DD:EE:FF. Optional: when
+it is omitted, the script scans for nearby classic Bluetooth audio devices
+(a2dpwb-core.exe --cli --scan) and uses the only one found. If several are
+found it lists them and asks for -Device instead of guessing. Maps to -d.
+
+.PARAMETER ScanSeconds
+Seconds for the automatic discovery scan when -Device is omitted. Default 8.
 
 .PARAMETER Codec
 ldac (default), aptxhd, aptxll, aptx, sbcxq, sbc, aac, lhdcv5, opus,
@@ -68,8 +73,15 @@ Print this comment-based help and exit.
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1
 
+Discovers the only nearby Bluetooth audio device and streams to it.
+
 .EXAMPLE
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Codec ldac -Quality hq -TestTone -Duration 10
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Device AA:BB:CC:DD:EE:FF -Codec ldac -Quality hq -TestTone -Duration 10
+
+Skips the scan and streams to the given address.
+
+.EXAMPLE
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -ScanSeconds 12
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Mode virtual -AudioDevice '{0.0.0.00000000}.{your-cable-endpoint-guid}'
@@ -79,13 +91,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Backgrou
 
 .NOTES
 Exit codes: 0 the core finished successfully (or a background run started),
-1 the core failed, 2 bad arguments or a2dpwb-core.exe is missing.
+1 the core failed, 2 bad arguments, a2dpwb-core.exe is missing, the scan
+failed, or the scan found no (or more than one) audio device.
 #>
 
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$Device = '<HEADSET_MAC>',
+    [string]$Device,
+    [ValidateRange(1, 120)]
+    [int]$ScanSeconds = 8,
     [ValidateSet('ldac', 'aptxhd', 'aptxll', 'aptx', 'sbcxq', 'sbc', 'aac', 'lhdcv5', 'opus', 'opus05', 'faststream', 'auto')]
     [string]$Codec = 'ldac',
     [ValidateSet('hq', 'sq', 'mq', 'mhq')]
@@ -132,8 +147,39 @@ function Fail {
     exit $Code
 }
 
-if (-not (Test-BluetoothAddress -Value $Device)) {
-    Fail "Invalid Bluetooth address '$Device' (-Device). Use 12 hex digits, e.g. <HEADSET_MAC>." 2
+function Get-ScannedAudioDevices {
+    param([int]$Seconds)
+
+    $Output = & $CoreExe --cli --scan "$Seconds" 2>$null
+    $scanCode = $LASTEXITCODE
+    if ($scanCode -ne 0) {
+        Fail "The Bluetooth scan failed (a2dpwb-core.exe exit code $scanCode). Check that the adapter is on WinUSB (scripts\usb-driver.ps1 -Mode assign), that its Realtek firmware is installed (scripts\fetch-realtek-fw.ps1), and that no other stream is running." 2
+    }
+
+    $Devices = @()
+    foreach ($Line in @($Output)) {
+        $Text = [string]$Line
+        if ($Text -notmatch '^(?<mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})\s{2}(?<name>.*?)\s+CoD\s+0x(?<cod>[0-9A-Fa-f]{6})\s+RSSI\s+(?<rssi>-?\d+)(?<tail>.*)$') {
+            continue
+        }
+        $Cod = [Convert]::ToUInt32($Matches['cod'], 16)
+        $IsAudio = ((($Cod -shr 8) -band 0x1F) -eq 0x04) -or ($Matches['tail'] -match '\(audio\)')
+        if (-not $IsAudio) { continue }
+
+        $Address = $Matches['mac'].ToUpperInvariant()
+        if (@($Devices | Where-Object { $_.Address -eq $Address }).Count -gt 0) { continue }
+        $Devices += [pscustomobject]@{
+            Address = $Address
+            Name    = $Matches['name'].Trim()
+            CoD     = ('0x{0:X6}' -f $Cod)
+            Rssi    = [int]$Matches['rssi']
+        }
+    }
+    return @($Devices)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($Device) -and -not (Test-BluetoothAddress -Value $Device)) {
+    Fail "Invalid Bluetooth address '$Device' (-Device). Use 12 hex digits, e.g. AA:BB:CC:DD:EE:FF." 2
 }
 
 if ($Mode -eq 'virtual' -and [string]::IsNullOrWhiteSpace($AudioDevice)) {
@@ -152,6 +198,32 @@ if ($Mode -ne 'app' -and -not [string]::IsNullOrWhiteSpace($App)) {
 $CoreExe = Join-Path $env:LOCALAPPDATA 'A2DP Windows Bridge\a2dpwb-core.exe'
 if (-not (Test-Path -LiteralPath $CoreExe -PathType Leaf)) {
     Fail "a2dpwb-core.exe not found at:`n  $CoreExe`nInstall A2DP-Windows-Bridge v2.0.1 (see README section 6); the launcher always uses the installed core." 2
+}
+
+if ([string]::IsNullOrWhiteSpace($Device)) {
+    Write-Host "No -Device given: scanning for nearby Bluetooth audio devices (${ScanSeconds}s)..."
+    $Found = @(Get-ScannedAudioDevices -Seconds $ScanSeconds)
+    if ($Found.Count -eq 0) {
+        Fail ("No Bluetooth audio device was found in ${ScanSeconds} s.`n" +
+            "Power the headphones on. For the very first connection put them in pairing mode`n" +
+            "(hold the power button until the indicator flashes), switch LE Audio off on the`n" +
+            "headset and disconnect any phone, then run the script again.`n" +
+            "To skip the scan, pass -Device <MAC>; find the address in Windows Settings >`n" +
+            "Bluetooth > Devices, or list the Windows-paired devices with`n" +
+            "  & `"$env:LOCALAPPDATA\A2DP Windows Bridge\a2dpwb-core.exe`" --cli -l") 2
+    }
+    if ($Found.Count -gt 1) {
+        [Console]::Error.WriteLine('Several Bluetooth audio devices were found; refusing to guess:')
+        for ($i = 0; $i -lt $Found.Count; $i++) {
+            $d = $Found[$i]
+            $n = if ([string]::IsNullOrWhiteSpace($d.Name)) { '(no name)' } else { $d.Name }
+            [Console]::Error.WriteLine(('  [{0}] {1}  {2}  CoD {3}  RSSI {4}' -f ($i + 1), $d.Address, $n, $d.CoD, $d.Rssi))
+        }
+        Fail "Re-run with -Device <MAC> to choose one of the devices above." 2
+    }
+    $Device = $Found[0].Address
+    $ChosenName = if ([string]::IsNullOrWhiteSpace($Found[0].Name)) { '(no name)' } else { $Found[0].Name }
+    Write-Host "Selected headset: $ChosenName  $Device  (CoD $($Found[0].CoD), RSSI $($Found[0].Rssi))"
 }
 
 $CoreArgs = @('--cli', '-d', $Device, '-c', $Codec, '-q', $Quality)

@@ -41,12 +41,25 @@ the current, verified result — not a plan.
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1
 ```
 
-That uses the verified defaults: device `<HEADSET_MAC>`, LDAC, quality
-`hq`, system-loopback capture, until Ctrl+C. Variants:
+With no `-Device`, the launcher **auto-discovers** the headphones: it runs
+`a2dpwb-core.exe --cli --scan <ScanSeconds>` (8 s by default), keeps the
+nearby classic Bluetooth audio devices and, if there is exactly one, uses it
+and prints which one it chose. If several audio devices are nearby it lists
+them and refuses to guess — re-run with `-Device <MAC>`. If none is found it
+explains that the headset must be powered on (and in pairing mode for the
+first connection) and exits with code 2. Then it uses LDAC, quality `hq`,
+system-loopback capture, until Ctrl+C. To find the address by hand, run
+`a2dpwb-core.exe --cli -l` or see Windows Settings > Bluetooth > Devices.
 
 ```powershell
 # 10 s test tone (1 kHz left / 1.5 kHz right) to check the link
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -TestTone -Duration 10
+
+# skip the scan and name the headset explicitly
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Device <HEADSET_MAC>
+
+# give the discovery scan more time
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -ScanSeconds 12
 
 # normal music, 990 kbps LDAC, stop with Ctrl+C
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 -Codec ldac -Quality hq
@@ -86,9 +99,12 @@ The procedure that worked:
 
 The link key is persisted, so later runs just work:
 
-* `%APPDATA%\A2DPWB\link_keys.txt` contains
-  `<HEADSET_MAC> REDACTED_LINK_KEY 4`
-* `%APPDATA%\A2DPWB\devices.txt` lists `<HEADSET_MAC>|`
+* `%APPDATA%\A2DPWB\link_keys.txt` persists the pairing in the format
+  `<address> <key> <type>` (for example `<HEADSET_MAC> <link key> <type>`;
+  the value is redacted here on purpose — it is a credential that can
+  impersonate this PC to the headset and must never be published).
+* `%APPDATA%\A2DPWB\devices.txt` lists the paired headset as
+  `<HEADSET_MAC>|`.
 
 Turn the headset on, keep LE Audio off, and run `scripts\stream.ps1`. The
 user observed exactly this: "the first time is the test, then it just works".
@@ -211,8 +227,8 @@ Prerequisite: firmware present (section 7) and the adapter on WinUSB with no
 pending reboot.
 
 ```powershell
-# 1. before switching: note the headphones' MAC (Windows Settings > Bluetooth),
-#    or list Windows-paired devices:  a2dpwb-core.exe --cli -l
+# 1. the headphones' MAC is auto-discovered by stream.ps1; to see it by hand,
+#    use Windows Settings > Bluetooth, or: a2dpwb-core.exe --cli -l
 # 2. take the adapter (UAC); reboot if it reports reboot_required: true
 powershell -ExecutionPolicy Bypass -File scripts\usb-driver.ps1 -Mode assign -Auto
 
