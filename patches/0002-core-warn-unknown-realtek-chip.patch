@@ -1,0 +1,23 @@
+diff --git a/app/src/crates/core/src/adapter.rs b/app/src/crates/core/src/adapter.rs
+index 3177824..d9fb3bf 100644
+--- a/app/src/crates/core/src/adapter.rs
++++ b/app/src/crates/core/src/adapter.rs
+@@ -108,11 +108,17 @@ pub fn configure(config: &mut HostConfig, settings: &Settings, _config_dir: &Pat
+     let pid =
+         chips::resolve_chip_pid(settings.bt_chip_pid, &settings.bt_chip_fw_stem, winusb.iter().map(|a| a.realtek_pid));
+     if pid != 0 {
++        let chip_name = chips::realtek_chip_name(pid);
+         tracing::info!(
+             "chip: {} (0x{pid:04X}){}",
+-            chips::realtek_chip_name(pid).unwrap_or("unknown"),
++            chip_name.unwrap_or("unknown"),
+             if auto { " (auto)" } else { "" }
+         );
++        if chip_name.is_none() {
++            tracing::warn!(
++                "chip 0x{pid:04X} is not in this build's chip table: set bt_chip_fw_stem in settings.json to its firmware stem (for example \"rtl8852bu\") so the firmware check advises the right files"
++            );
++        }
+         config.realtek_pid = pid;
+     } else {
+         tracing::info!(

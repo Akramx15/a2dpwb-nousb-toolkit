@@ -1,0 +1,12 @@
+diff --git a/app/src/crates/bt-host/src/chips.rs b/app/src/crates/bt-host/src/chips.rs
+index 65f8c49..b807377 100644
+--- a/app/src/crates/bt-host/src/chips.rs
++++ b/app/src/crates/bt-host/src/chips.rs
+@@ -53,6 +53,7 @@ pub static REALTEK_CHIPS: &[RealtekChip] = &[
+     chip(0xD723, "RTL8723DU", "rtl8723du_fw", "rtl8723du_config"),
+     chip(0xC852, "RTL8852AU", "rtl8852au_fw", "rtl8852au_config"),
+     chip(0xB85B, "RTL8852BU", "rtl8852bu_fw", "rtl8852bu_config"),
++    chip(0x4853, "RTL8852BU", "rtl8852bu_fw", "rtl8852bu_config"),
+     chip(0xB85D, "RTL8852BTU", "rtl8852btu_fw", "rtl8852btu_config"),
+     chip(0xC85A, "RTL8852CU", "rtl8852cu_fw", "rtl8852cu_config"),
+     chip(0xB083, "RTL8851BU", "rtl8851bu_fw", "rtl8851bu_config"),
