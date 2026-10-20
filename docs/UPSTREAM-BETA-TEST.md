@@ -26,8 +26,8 @@ files by name, which is exactly what 2.0.1 could not do:
 
 ```
 INFO chip: RTL8852BU (0xB85B) (auto)
-WARN firmware file missing: C:\Users\<user>\AppData\Roaming\A2DPWB\rtl8852bu_fw.bin
-WARN firmware file missing: C:\Users\<user>\AppData\Roaming\A2DPWB\rtl8852bu_config.bin
+WARN firmware file missing: %APPDATA%\A2DPWB\rtl8852bu_fw.bin
+WARN firmware file missing: %APPDATA%\A2DPWB\rtl8852bu_config.bin
 ```
 
 The GUI shows the same state, with the chip named by its **actual USB PID** and
