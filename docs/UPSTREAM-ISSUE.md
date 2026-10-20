@@ -9,7 +9,7 @@ Copy the body below:
 ````markdown
 ### 1) Environment
 
-- Windows 11 build 26100, x64.
+- Windows 11 build 26200.9711 (25H2), x64.
 - A2DP-Windows-Bridge **2.0.1**, stock release binaries (`a2dpwb.exe`, `a2dpwb-core.exe`, `a2dpwb-driver.exe`).
 - Adapter: internal USB `USB\VID_0BDA&PID_4853` = Realtek **RTL8852BU**. It is a single USB function; the machine's Wi-Fi is a separate function and is unaffected.
 - Headset: the headset, classic A2DP, address `<HEADSET_MAC>`, LE Audio switched **off** on the headset.

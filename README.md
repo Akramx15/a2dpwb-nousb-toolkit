@@ -16,6 +16,7 @@ Toolkit layout (this repo):
 | `scripts/doctor.ps1` | Read-only diagnosis + verdict |
 | `scripts/cold-boot-test.ps1` | Three-phase cold-boot check of the Realtek firmware path (run after a Windows reboot) |
 | `scripts/set-default-audio.ps1` | Lists the render endpoints and sets the Windows default output (IPolicyConfig); `-List`, `-Device`, `-Restore`, `-WhatIf` |
+| `scripts/copy-diagnostics.ps1` | Reads the app's **Copy Diagnostics** text over the core's IPC pipe, without the GUI; `-Masked` (default), `-Full`, `-Output` |
 | `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app — **superseded by upstream PR #82** (2.0.2-beta.1); kept for 2.0.1 source builds only |
 | `vendor-patches/` | The patched copies the diffs were generated from |
 | `docs/HEADPHONES-ONLY.md` | **Headphones-only routing through VB-CABLE**: the full recipe, the verified evidence and the one-command revert |

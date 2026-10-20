@@ -29,6 +29,32 @@ wrapper). While `CABLE Input` is the default and nothing streams it, **the PC
 has no sound at all** — that is the known footgun, documented at the top of
 `docs/HEADPHONES-ONLY.md`.
 
+### Upstream thread state (issue #81, updated 2026-10-20 16:40)
+
+`https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues/81` — open, 5
+comments (1 from the maintainer, 4 from this account).
+
+| What | State |
+|---|---|
+| PR #82 (chip families) | merged 03:43, shipped in v2.0.2-beta.1 |
+| v2.0.2 final | **not released yet** — latest is still v2.0.1, beta is a pre-release |
+| Issue title | corrected: no longer claims the firmware caused `error 50` |
+| Issue body | carries a correction banner; the build number was corrected to 26200.9711 |
+| Comments 2 and 4 | beta test report, and the cold/unpatched-module finding |
+| Comment 3 | the causal correction; its code pointer was later corrected in place |
+| Comment 5 | the Diagnostics text (asked for by the maintainer), the build correction, and a concrete proposal for a "running ROM firmware" warning |
+
+Two corrections are recorded in the public thread, both mine and both of the
+same kind: a fact taken from a **grep hit or from memory** instead of from the
+source. `driver.rs:359` is the **restore** path, not the assign path, and the
+machine is Windows build **26200.9711 (25H2)**, not 26100. The rule that
+follows: every claim about another codebase names a `file:line` that was
+opened, not one that a search returned.
+
+The maintainer's open request — the Diagnostics text — is answered in comment 5.
+`scripts/copy-diagnostics.ps1` produces the same text without the GUI, over
+the core's named pipe.
+
 ## Verified on this machine (evidence, not assumptions)
 
 | Fact | Evidence |

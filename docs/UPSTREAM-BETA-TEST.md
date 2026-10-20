@@ -12,7 +12,7 @@ run on the reporter's machine with the internal Realtek **RTL8852BU**
 
 | | |
 |---|---|
-| OS | Windows 11 build 26100, x64 |
+| OS | Windows 11 build 26200.9711 (25H2), x64 |
 | Build under test | `A2DPWB-2.0.2-beta.1-win64-portable.zip` (portable, same binaries as the installer) |
 | Adapter | internal USB `0BDA:4853` = Realtek RTL8852BU, WinUSB-bound |
 | Headset | the headset, classic A2DP, LE Audio off, address `<HEADSET_MAC>` |
