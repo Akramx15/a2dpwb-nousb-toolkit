@@ -13,6 +13,7 @@ Toolkit layout (this repo):
 | `scripts/usb-driver.ps1` | Wraps `a2dpwb-driver.exe` (assign / restore) and `pnputil` (restart) |
 | `scripts/run-emulator.ps1` | Zero-hardware end-to-end run against the Bumble virtual sink |
 | `scripts/doctor.ps1` | Read-only diagnosis + verdict |
+| `scripts/cold-boot-test.ps1` | Three-phase cold-boot check of the Realtek firmware path (run after a Windows reboot) |
 | `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app |
 | `vendor-patches/` | The patched copies the diffs were generated from |
 | `docs/` | Build-from-source guide, decisions (ADRs) and the drafted upstream issue |
