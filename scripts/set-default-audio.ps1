@@ -523,7 +523,7 @@ function Set-DefaultEndpoint {
 
 try {
     $wantList = $List.IsPresent
-    $haveDevice = -not [string]::IsNullOrWhiteSpace($Device)
+    $haveDevice = $PSBoundParameters.ContainsKey('Device')
 
     if (-not $wantList -and -not $haveDevice -and -not $Restore.IsPresent) { $wantList = $true }
 
