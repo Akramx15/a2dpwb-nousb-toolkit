@@ -1,8 +1,9 @@
 # A2DP-Windows-Bridge without a USB dongle (internal RTL8852BU)
 
-Operating manual for running **A2DP-Windows-Bridge v2.0.1** on this PC using
-only its **internal** Bluetooth radio (`USB\VID_0BDA&PID_4853\00E04C0000XX`,
-Realtek **RTL8852BU**). No external USB dongle is bought.
+Operating manual for running **A2DP-Windows-Bridge 2.0.2-beta.1** on this PC
+using only its **internal** Bluetooth radio
+(`USB\VID_0BDA&PID_4853\00E04C0000XX`, Realtek **RTL8852BU**). No external USB
+dongle is bought.
 
 Toolkit layout (this repo):
 
@@ -14,8 +15,11 @@ Toolkit layout (this repo):
 | `scripts/run-emulator.ps1` | Zero-hardware end-to-end run against the Bumble virtual sink |
 | `scripts/doctor.ps1` | Read-only diagnosis + verdict |
 | `scripts/cold-boot-test.ps1` | Three-phase cold-boot check of the Realtek firmware path (run after a Windows reboot) |
+| `scripts/set-default-audio.ps1` | Lists the render endpoints and sets the Windows default output (IPolicyConfig); `-List`, `-Device`, `-Restore`, `-WhatIf` |
 | `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app — **superseded by upstream PR #82** (2.0.2-beta.1); kept for 2.0.1 source builds only |
 | `vendor-patches/` | The patched copies the diffs were generated from |
+| `docs/HEADPHONES-ONLY.md` | **Headphones-only routing through VB-CABLE**: the full recipe, the verified evidence and the one-command revert |
+| `docs/UNPATCHED-MODULE.md` | **An unpatched module opens the adapter but cannot stream**: reproduction and what it means for the user |
 | `docs/` | Build-from-source guide, decisions (ADRs), the root-cause account and the drafted upstream issue |
 
 `../upstream/` is the read-only reference clone of v2.0.1. **Never edit or
@@ -47,20 +51,23 @@ in `docs/ROOT-CAUSE.md`.
 embeds BTstack, whose licence does not allow commercial use or redistribution
 without a BlueKitchen licence.
 
-## Verified working on this PC (2026-10-19)
+## Verified working on this PC (2026-10-19 / 2026-10-20)
 
 Real hardware, real radio, classic A2DP over the internal RTL8852BU. This is
 the current, verified result — not a plan.
 
 | Check | Evidence |
 |:--|:--|
+| Build | **2.0.2-beta.1**, official NSIS installer, `currentUser` mode (no administrator rights) |
 | Device | the headset, `<HEADSET_MAC>`, classic A2DP (LE Audio switched **off** on the headset) |
+| Chip | `chip: RTL8852BU (0xB85B)` (2.0.1 said `chip: unknown (0x4853)`) |
 | Codec discovery | `remote supports LDAC (SEID 3, [2D, 01, 00, 00, AA, 00, 3C, 07])` → `codec selected: LDAC` |
 | Codec setup | `LDAC: initialized (rate=48000, ch=2, 24-bit, quality=High, transport mtu=895, bitrate=990 kbps)` |
 | State | `state Streaming: Connected` |
 | 40 s test tone | `Sent 7507 media packets (5052211 bytes), 0 dropped` |
 | 25 s system loopback | `Sent 4701 media packets (3163773 bytes), 0 dropped` |
 | User confirmation | A song played on the PC came out of the headphones **and** the PC speakers, excellent quality, no dropouts |
+| Headphones-only routing | `CABLE Input` as default output + virtual capture: `Sent 3789 media packets (2549997 bytes), 0 dropped before the radio`, speakers silent — `docs/HEADPHONES-ONLY.md` |
 
 ### Daily use: one command
 
@@ -136,41 +143,51 @@ The link key is persisted, so later runs just work:
 Turn the headset on, keep LE Audio off, and run `scripts\stream.ps1`. The
 user observed exactly this: "the first time is the test, then it just works".
 
-### Why the PC speakers play too (and how to fix it)
+### Why the PC speakers play too
 
 The default capture mode is a WASAPI **loopback of the default output device**
 (`Speakers (Realtek(R) Audio)`). Loopback taps the mix; it does not mute it.
 So Windows still renders the song to the speakers while A2DPWB encodes the
-same audio for the headphones. That is expected, not a fault.
-
-To hear the audio **only in the headphones**, capture a virtual render device
-instead (optional, one-time setup):
-
-1. Install a virtual cable such as [VB-CABLE](https://vb-audio.com/Cable/)
-   and reboot if the installer asks.
-2. Find the render endpoint ID:
-
-   ```powershell
-   Get-PnpDevice -Class AudioEndpoint -Status OK |
-     Where-Object { $_.InstanceId -like 'SWD\MMDEVAPI\{0.0.0.*' } |
-     Select-Object FriendlyName, @{n='AudioDeviceId';e={ $_.InstanceId -replace '^SWD\\MMDEVAPI\\','' }}
-   ```
-
-3. Run the stream against `CABLE Input`:
-
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stream.ps1 `
-     -Mode virtual -AudioDevice '{0.0.0.00000000}.{your-cable-endpoint-guid}' -Codec ldac
-   ```
-
-   The core makes that device the default output for the session
-   (`auto_switch`) and restores the previous default when the stream stops.
-   If you prefer to set it yourself, choose `CABLE Input` as the default in
-   **Settings > System > Sound > Output** before starting.
+same audio for the headphones. That is expected, not a fault, and it is
+upstream's own wording (`docs/usage.md`: "System Loopback copies the audio; it
+does not take it away from the default output device").
 
 `-Mode app -App <exe>` captures one application's process tree, but that app
 still plays on the default output too; only virtual-device mode removes the
 speaker copy.
+
+### Headphones only (VB-CABLE)
+
+The verified recipe on this PC: install **VB-CABLE** (a render device that
+plays nowhere), make `CABLE Input` the Windows default output through
+`scripts\set-default-audio.ps1`, and run the app in **Virtual Device** mode
+against that endpoint. The cable swallows the audio, A2DPWB captures it, and
+the speakers stay silent.
+
+* Full recipe, verified evidence and the one-command revert:
+  **[`docs/HEADPHONES-ONLY.md`](docs/HEADPHONES-ONLY.md)**.
+* The footgun: while `CABLE Input` is the default and the app is not streaming,
+  the PC has **no sound at all**. The revert is at the top of that document:
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps1 `
+    -Restore -Device "Speakers (Realtek(R) Audio)"
+  ```
+
+  (`-Restore` alone exits 2 on this PC: it finds two candidates, the Realtek
+  speakers and the Boom 3D wrapper, and refuses to guess.)
+
+Related:
+
+* **An unpatched module opens but does not stream.** Measured on a cold boot
+  with the firmware files removed — the adapter and HCI come up, the app names
+  the missing files, and the stream never establishes; restoring the `.bin`
+  files fixes it on the same boot. The `firmware file missing` warning is the
+  decisive signal, not the adapter state. Reproduction and evidence:
+  **[`docs/UNPATCHED-MODULE.md`](docs/UNPATCHED-MODULE.md)**.
+* **A virtual cable is not a driver trick.** It is a normal render endpoint;
+  the app only needs its WASAPI id (`--audio-device`) and the Windows default
+  output pointed at it.
 
 ## 1. What A2DP-Windows-Bridge does
 
@@ -211,7 +228,8 @@ Known limitation of v2.0.1: the app's own chip table
 (`app/src/crates/bt-host/src/chips.rs`, `REALTEK_CHIPS`) lacks `0x4853`, so
 the UI/log says `chip: unknown (0x4853)`. The `patches/` in this repo fix
 that name so the UI advises the correct firmware files. BTstack itself does
-not need the app table: it already loads `rtl8852bu_fw`.
+not need the app table: it already loads `rtl8852bu_fw`. The installed
+**2.0.2-beta.1** resolves it on this PC: `chip: RTL8852BU (0xB85B) (auto)`.
 
 **The patches here are superseded by upstream.** PR
 [SeiyaFunaokaJP/A2DP-Windows-Bridge#82](https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/pull/82)
@@ -221,17 +239,19 @@ firmware table at build time, so *every* PID of a known family is recognised
 `patches/` are kept only as a reference for building **2.0.1** from source;
 do not apply them to 2.0.2 or newer.
 
-## 4. Current state of this PC (2026-10-19)
+## 4. Current state of this PC (2026-10-19, updated 2026-10-20)
 
-Historical setup state; the verified streaming result is in the top section.
+Setup state; the verified streaming result is in the top section.
 
 | Item | Value |
 |:--|:--|
 | Adapter instance | `USB\VID_0BDA&PID_4853\00E04C0000XX` |
+| Installed app | **2.0.2-beta.1** (installed over 2.0.1 with the official NSIS installer, `currentUser`, no admin) |
 | Current driver | `winusb.inf` / service `WINUSB` (WinUSB Device) |
 | Previous driver (recorded) | `oem197.inf`, Realtek, service `BTHUSB`, `reboot_required: true` |
 | WinUSB open result | **opens** (the former `failed to initialize WinUSB (error 50)` was the binding not being live; it cleared once the device was re-enumerated) |
 | Firmware in `%APPDATA%\A2DPWB` | **present and shape-valid** (129,733-byte firmware, 6-byte config, installed 20:20) |
+| Virtual cable | **VB-CABLE installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`); Windows default output left on `CABLE Input` — revert per `docs/HEADPHONES-ONLY.md` |
 | App binaries | `a2dpwb-core.exe`, `a2dpwb-driver.exe`, `a2dpwb.exe` present |
 | Toolchain | Rust 1.97, Node 24; **no MSVC C++ compiler** in `C:\BuildTools`; no `pnpm`; no `pwsh` |
 
@@ -357,7 +377,9 @@ action" is the one thing to do), `2` = the doctor itself failed.
    build, re-run `fetch-realtek-fw.ps1 -Force`, then restart the adapter.
    Without any `rtl8852bu_fw` / `rtl8852bu_config` the module stays in ROM mode
    (unpatched); it still opens and serves HCI, so the missing files do not
-   produce `error 50`.
+   produce `error 50`, but **the A2DP stream does not establish** — the
+   `firmware file missing` warning is the decisive signal
+   (`docs/UNPATCHED-MODULE.md`).
 4. **`pnpm` and PowerShell 7 missing.** Needed only for the UI build and
    `build.ps1`; the core and the emulator do not need them.
 5. **Resident core is USB-only.** The emulator cannot be driven from the
@@ -374,5 +396,9 @@ action" is the one thing to do), `2` = the doctor itself failed.
   idempotent and records the previous driver).
 * `fetch-realtek-fw.ps1` is idempotent; valid files are kept, invalid ones
   replaced, and every SHA-256 is printed.
+* `set-default-audio.ps1` changes where **every** app plays, for the current
+  user, and prints the plan first with `-WhatIf`. With `CABLE Input` as the
+  default the PC is silent while nothing streams it; keep the `-Restore`
+  command from `docs/HEADPHONES-ONLY.md` at hand.
 * Nothing here edits `../upstream/`. Patches are applied to a copy under
   `vendor-patches/` and verified with `git apply --check` against upstream.

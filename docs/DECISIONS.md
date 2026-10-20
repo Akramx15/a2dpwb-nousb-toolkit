@@ -1,7 +1,7 @@
 # Decision records
 
 ADR-style records for the no-USB A2DP-Windows-Bridge toolkit. Each has
-Context / Decision / Consequences / Status. Dates are 2026-10-19.
+Context / Decision / Consequences / Status. Dates are 2026-10-19 unless noted.
 
 ## D1 - Use the internal RTL8852BU instead of buying a dongle
 
@@ -112,7 +112,8 @@ endpoint (or in exclusive mode) is still not captured. If the core is killed
 hard while the guard is active, the virtual device can remain the default;
 restore it in Sound settings.
 
-**Status.** Accepted.
+**Status.** Accepted. Refined by D8, which makes the persistent-default variant
+the documented recipe.
 
 ## D6 - Classic A2DP needs LE Audio off and the phone disconnected
 
@@ -172,3 +173,71 @@ files from `%APPDATA%\A2DPWB`, reboot, then run
 
 **Status.** Accepted. Supersedes the causal claim in the first HANDOFF/README
 draft and in the first upstream draft.
+
+## D8 - Headphones only: a virtual render device, not a muted default output
+
+**Context.** System loopback taps the default output and leaves it playing
+(D5); upstream says so itself in `docs/usage.md`: "System Loopback copies the
+audio; it does not take it away from the default output device ... To hear it
+only on the headphones, use Virtual Device mode with a device that does not
+play anywhere, such as VB-CABLE." A2DPWB has no virtual output device of its
+own. Muting the default output is not the documented remedy (upstream's is
+Virtual Device mode), and a mute would not be visible or reversible from the
+app. On this PC VB-CABLE is installed (`CABLE Input` = render,
+`CABLE Output` = capture, `CABLE In 16ch` = 16-channel render), and the app's
+CLI sets `auto_switch: true` for classic A2DP virtual mode
+(`app/src/core/src/cli.rs:413`), which only covers the process lifetime.
+
+**Decision.** Route the audio through a virtual render endpoint that plays
+nowhere. Make it the Windows default for eConsole, eMultimedia and
+eCommunications with `scripts/set-default-audio.ps1` (IPolicyConfig), and run
+the app in Virtual Device mode against that endpoint's WASAPI id. Do not mute
+the physical output. Keep the setting outside the app's lifetime, so the state
+is explicit and visible with `-List`. Document the footgun and the revert:
+while the cable is the default and nothing streams it, the PC is silent.
+
+**Consequences.** The PC speakers stay silent even though the same audio is
+streaming, and headphones-only needs no code change upstream. All apps that
+play to the default output follow the cable; apps pinned to another endpoint
+(or using exclusive mode) are neither redirected nor captured. VB-CABLE is
+third-party donationware with its own installer and reboot; the cable is
+shared-mode, so 48 kHz unless the endpoint's format is changed. Reverting is
+one command and must be documented where the change is made
+(`docs/HEADPHONES-ONLY.md`). Verified on this PC: `Sent 3789 media packets
+(2549997 bytes), 0 dropped before the radio` with `state Streaming: Connected`
+and the capture line `loopback of "CABLE Input (VB-Audio Virtual Cable)"`.
+
+**Status.** Accepted (2026-10-20). Refines D5.
+
+## D9 - An unpatched module opens the adapter but cannot stream
+
+**Context.** Cold boot on 2026-10-20 with all four firmware files removed from
+`%APPDATA%\A2DPWB`, build 2.0.2-beta.1, module in ROM mode (`ROM LMP
+subversion 0x8852`): the adapter opened and HCI came up, and the app printed
+both `firmware file missing` warnings — but the A2DP stream did not establish
+(no `state Streaming: Connected`, no `Sent ...` line). Restoring only the two
+`.bin` files on the same boot made the app recreate the aliases, upload the
+firmware (`download ran: True`) and stream LDAC with 0 dropped
+(`packets=3759 bytes=2529807 dropped=0; streaming=True`). So "the adapter
+opened" is compatible with "the firmware was not loaded", and the failure mode
+of an unpatched module on this part is a dead stream, not a dead adapter.
+
+**Decision.** Never diagnose the firmware from the adapter state. Treat the
+`firmware file missing: ...` warning as the decisive signal, and fix it by
+installing `rtl8852bu_fw.bin` / `rtl8852bu_config.bin` into
+`%APPDATA%\A2DPWB` (the app recreates the extension-less aliases). Keep the
+cold-boot script's phase-1 stream probe **informational**: phase 1 checks the
+named diagnostics, phase 3 checks that streaming works after recovery.
+
+**Consequences.** "Adapter opens" and "HCI ready" are no longer read as proof
+that the firmware is present, in the README, the handoff and the upstream
+draft. A user whose stream fails while the adapter is fine gets one actionable
+message (install the firmware) instead of chasing WinUSB, the driver or
+pairing. Scope: measured on this machine with this RTL8852BU, this firmware set
+and this build; the mechanism is BTstack/Realtek-general, the streaming
+failure is an observation here (`docs/UNPATCHED-MODULE.md`). Reproduction:
+back up the four files to `%APPDATA%\A2DPWB-coldboot-backup` (the script
+restores from there and exits 2 without it), remove them, reboot, then
+`powershell -File scripts\cold-boot-test.ps1 -Mode Missing`.
+
+**Status.** Accepted (2026-10-20). Extends D7.

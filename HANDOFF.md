@@ -12,10 +12,28 @@ time — not because the radio itself is special.
 **Streaming to the real headset is VERIFIED** (2026-10-19): classic A2DP, LDAC
 990 kbps, 0 dropped packets, heard by the user with no dropouts.
 
+**Current machine state (2026-10-20).** The installed app is
+**2.0.2-beta.1** (official NSIS installer, `currentUser`, installed over
+2.0.1), and the chip now resolves as `chip: RTL8852BU (0xB85B)`. **VB-CABLE is
+installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`) and the Windows
+default output is intentionally left on `CABLE Input` for headphones-only
+audio. One command puts the speakers back:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps1 `
+  -Restore -Device "Speakers (Realtek(R) Audio)"
+```
+
+`-Restore` alone exits 2 here (two physical candidates: Realtek and the Boom 3D
+wrapper). While `CABLE Input` is the default and nothing streams it, **the PC
+has no sound at all** — that is the known footgun, documented at the top of
+`docs/HEADPHONES-ONLY.md`.
+
 ## Verified on this machine (evidence, not assumptions)
 
 | Fact | Evidence |
 |---|---|
+| Installed build | `2.0.2-beta.1` (NSIS, `currentUser`); `chip: RTL8852BU (0xB85B) (auto)` |
 | Adapter is USB, bound to WinUSB | `DEVPKEY_Device_Service = WINUSB`, `Status Started`, `ProblemCode 0` |
 | WinUSB opens the adapter | `INFO USB: opened 0BDA:4853 ... (event 0x81, ACL 0x82/0x02)` |
 | Controller is alive | `INFO controller: company 0x005D (Realtek), HCI version 11, LMP subversion 0xFD78` |
@@ -29,6 +47,7 @@ time — not because the radio itself is special.
 | Stable state | `state Streaming: Connected` |
 | 40 s test tone | `Sent 7507 media packets (5052211 bytes), 0 dropped` |
 | 25 s system loopback | `Sent 4701 media packets (3163773 bytes), 0 dropped` |
+| Headphones-only routing | `CABLE Input` default + virtual capture: `Sent 3789 media packets (2549997 bytes), 0 dropped before the radio`; speakers silent (`docs/HEADPHONES-ONLY.md`) |
 | User confirmation | A PC song played from the headphones and the PC speakers, excellent quality, no dropouts |
 | Zero-hardware path works | `--hci-tcp` + Bumble virtual controller: LDAC / SBC / aptX HD all reached `Streaming`, 0 dropped packets |
 
@@ -60,6 +79,12 @@ were **two independent causes**, not one — full account in `docs/ROOT-CAUSE.md
   `%APPDATA%\A2DPWB`, plus the extension-less aliases `rtl8852bu_fw` /
   `rtl8852bu_config` that BTstack reads; no reboot, no Administrator rights and
   no driver change are needed for that.
+  Cold-boot round 2 added the decisive detail: on the unpatched module the
+  **A2DP stream does not establish** (no `state Streaming: Connected`, no
+  `Sent ...` line) even though the adapter opened; restoring only the `.bin`
+  files made the same cold module upload the firmware and stream with 0
+  dropped. So the warning — not the adapter state — is the signal (D9,
+  `docs/UNPATCHED-MODULE.md`).
 
 **First pairing: resolved.** Two L2CAP codes came from upstream/BTstack
 constants, not from a toolkit bug:
@@ -79,7 +104,7 @@ this ("the first time is the test, then it just works").
 
 ## Done
 
-* Toolkit repo (`work/a2dpwb-nousb`) with five PowerShell 5.1 scripts, two
+* Toolkit repo (`work/a2dpwb-nousb`) with eight PowerShell 5.1 scripts, two
   verified upstream patches, the operating manual, the build-from-source guide
   and the decision records.
 * `scripts/doctor.ps1` — read-only state report + verdict.
@@ -92,6 +117,13 @@ this ("the first time is the test, then it just works").
 * `scripts/stream.ps1` — daily-use launcher for the installed core (device,
   codec, quality, ABR, rate, mode, test tone, duration, background). Every
   flag was cross-checked against `upstream/app/src/core/src/cli.rs`.
+* `scripts/set-default-audio.ps1` — read/modify the Windows default render
+  endpoint (IPolicyConfig, all three roles); `-List`, `-Device`, `-Restore`,
+  `-WhatIf`. Used for headphones-only routing.
+* `docs/HEADPHONES-ONLY.md` — the reproducible VB-CABLE recipe (official
+  SHA-256, endpoint discovery, GUI + CLI, verified log lines, revert).
+* `docs/UNPATCHED-MODULE.md` — cold-boot finding: an unpatched module opens
+  the adapter but cannot stream; the missing-firmware warning is the signal.
 * Real-hardware streaming verified: the headset, LDAC 990 kbps, 0 dropped
   packets, confirmed by ear.
 * `patches/0001-...` and `patches/0002-...` apply cleanly to upstream
@@ -111,7 +143,9 @@ this ("the first time is the test, then it just works").
 
 ## Remaining OPTIONAL work
 
-The goal is met. These are improvements, not blockers:
+The goal is met. These are improvements, not blockers. (The former item
+"virtual-device-only audio" is **done**: VB-CABLE is installed — see
+`docs/HEADPHONES-ONLY.md` and D8.)
 
 1. **96 kHz LDAC at 990 kbps.** Set the Windows playback format for the
    output device to 96 kHz (Settings > System > Sound > device > Format), then
@@ -119,14 +153,10 @@ The goal is met. These are improvements, not blockers:
    run was 48 kHz.
 2. **ABR.** Try `scripts\stream.ps1 -Abr` when the RF conditions vary; it maps
    to `-a` (LDAC / LHDC V5).
-3. **Virtual-device-only audio.** Install VB-CABLE and use
-   `scripts\stream.ps1 -Mode virtual -AudioDevice <id>` so the PC speakers no
-   longer play the same song. See README's verified section for the exact
-   device-ID command and the auto-switch behaviour.
-4. **GUI/tray app for daily use.** `a2dpwb.exe` exposes the same core with a
+3. **GUI/tray app for daily use.** `a2dpwb.exe` exposes the same core with a
    UI; use it when a tray icon is preferable to a PowerShell window. The
    resident path is USB-only, so the emulator still needs `--cli`.
-5. **Restore the Windows Bluetooth driver when not streaming.** Keep the
+4. **Restore the Windows Bluetooth driver when not streaming.** Keep the
    adapter on WinUSB for frequent use, or run
    `scripts\usb-driver.ps1 -Mode restore` afterwards (D2). Windows Bluetooth
    (and any device using it) stays unavailable while A2DPWB owns the radio.
@@ -138,13 +168,17 @@ The goal is met. These are improvements, not blockers:
    manual and the known blockers.
 3. `scripts\stream.ps1` — the daily path; every flag maps to
    `upstream/app/src/core/src/cli.rs`.
-4. `docs/DECISIONS.md` — D1..D7, especially D2 (restore), D5 (loopback vs
-   virtual), D6 (LE Audio off / phone disconnected) and D7 (error 50 is the
-   WinUSB binding, not the firmware).
-5. `docs/ROOT-CAUSE.md` — the two independent causes with their evidence.
-6. `scripts/doctor.ps1` — single source of truth for current state.
-7. `docs/BUILD-FOR-SOURCE.md` — only if a build becomes necessary.
-8. Upstream reference (read-only): `upstream/app/src/core/src/cli.rs` (every
-   flag the launcher uses), `upstream/app/src/driver/src/main.rs` (helper CLI),
-   `upstream/app/src/crates/bt-host/src/chips.rs` (chip table),
-   `upstream/app/src/crates/core/src/adapter.rs` (the `chip:` log line).
+4. `docs/DECISIONS.md` — D1..D9, especially D2 (restore), D5 (loopback vs
+   virtual), D6 (LE Audio off / phone disconnected), D7 (error 50 is the
+   WinUSB binding, not the firmware), D8 (headphones-only through a virtual
+   render device) and D9 (an unpatched module opens but cannot stream).
+5. `docs/HEADPHONES-ONLY.md` — the VB-CABLE recipe, verified evidence and the
+   revert command (also the current state of this PC's default output).
+6. `docs/UNPATCHED-MODULE.md` — the cold-boot finding and its reproduction.
+7. `docs/ROOT-CAUSE.md` — the two independent causes with their evidence.
+8. `scripts/doctor.ps1` — single source of truth for current state.
+9. `docs/BUILD-FOR-SOURCE.md` — only if a build becomes necessary.
+10. Upstream reference (read-only): `upstream/app/src/core/src/cli.rs` (every
+    flag the launcher uses), `upstream/app/src/driver/src/main.rs` (helper CLI),
+    `upstream/app/src/crates/bt-host/src/chips.rs` (chip table),
+    `upstream/app/src/crates/core/src/adapter.rs` (the `chip:` log line).
