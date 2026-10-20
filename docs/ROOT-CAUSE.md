@@ -17,10 +17,15 @@ has re-enumerated the device.
 
 Evidence:
 
-* the helper's own record for the assign says `"reboot_required": Bool(true)`;
-* upstream re-enumerates the device at that point
-  (`uninstall_and_reenumerate(...)` in
-  `app/src/crates/win-sys/src/driver.rs:359`);
+* the helper's own record for the assign says `"reboot_required": Bool(true)` -
+  the restart flag `DiInstallDevice` returns
+  (`app/src/crates/win-sys/src/driver.rs:442`, returned at `:444`, surfaced as
+  `AssignOutcome.reboot_required` at `:319` and logged as ", restart needed"
+  at `:317`);
+* that flag means the binding is not live on the running device node until
+  Windows re-enumerates the device. A successful assign does **not** re-enumerate
+  by itself: `uninstall_and_reenumerate` (`driver.rs:359`) is the **restore**
+  path, and `driver.rs:564` is the rollback of a failed assign;
 * the first scan 7 s after the assign failed with
   `failed to initialize WinUSB (error 50)`; the same adapter opened as soon as
   the device was re-enumerated, with no other change;

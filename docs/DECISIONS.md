@@ -155,10 +155,11 @@ then ran with 0 dropped packets. Details: `docs/UPSTREAM-BETA-TEST.md`,
 
 **Decision.** Record and document the two causes as independent. Error 50 means
 the WinUSB binding is not live yet: the driver record says
-`"reboot_required": true` at assign time, upstream calls
-`uninstall_and_reenumerate(...)` (`app/src/crates/win-sys/src/driver.rs:359`)
-and its remedy for an adapter that does not answer is unplug/replug
-(`docs/usage.md:472`). The missing firmware is detected **by name**
+`"reboot_required": true` at assign time - the restart flag `DiInstallDevice`
+returns (`app/src/crates/win-sys/src/driver.rs:442`, returned at `:444`) - and
+upstream's remedy for an adapter that does not answer is unplug/replug
+(`docs/usage.md:472`). A successful assign does not re-enumerate by itself;
+`uninstall_and_reenumerate` (`driver.rs:359`) is the restore path. The missing firmware is detected **by name**
 (`WARN firmware file missing: ...` in 2.0.2-beta.1), not by an open failure; it
 leaves the module in ROM mode and is fixed by installing `rtl8852bu_fw.bin` /
 `rtl8852bu_config.bin` into `%APPDATA%\A2DPWB`.

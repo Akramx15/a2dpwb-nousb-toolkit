@@ -27,8 +27,9 @@ USB: cannot claim interface 0 of 0BDA:4853: failed to initialize WinUSB (error 5
 `error 50` is `ERROR_NOT_SUPPORTED`, which reads like a WinUSB or driver
 problem. It is neither that nor the firmware: it means the **WinUSB binding is
 not live yet**. The helper flags that at assign time — its driver record says
-`"reboot_required": true` — and the code re-enumerates the device
-(`uninstall_and_reenumerate(...)` in `app/src/crates/win-sys/src/driver.rs:359`).
+`"reboot_required": true`, the restart flag `DiInstallDevice` returns
+(`app/src/crates/win-sys/src/driver.rs:442`, returned at `:444`) — so the new
+driver is not bound to the running device node until Windows re-enumerates it.
 The first scan 7 seconds after the assign failed with error 50; the same adapter
 opened as soon as it was re-enumerated, with no other change. Your own remedy
 for an adapter that does not answer is "Unplug the adapter, plug it back in and

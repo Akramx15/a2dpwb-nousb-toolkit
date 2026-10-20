@@ -61,9 +61,12 @@ contains only the no-dongle toolkit and its documentation.
 were **two independent causes**, not one — full account in `docs/ROOT-CAUSE.md`.
 
 * **Error 50 was the WinUSB binding not being live yet.** The helper flags it at
-  assign time (the driver record says `"reboot_required": true`) and upstream
-  re-enumerates the device (`uninstall_and_reenumerate(...)` in
-  `app/src/crates/win-sys/src/driver.rs:359`). The first scan 7 s after the
+  assign time (the driver record says `"reboot_required": true` — the restart
+  flag `DiInstallDevice` returns, `app/src/crates/win-sys/src/driver.rs:442`),
+  so the binding is not live on the running device node until Windows
+  re-enumerates it. A successful assign does not re-enumerate by itself;
+  `uninstall_and_reenumerate` (`driver.rs:359`) is the restore path. The first
+  scan 7 s after the
   assign failed with error 50; the same adapter opened as soon as the device was
   re-enumerated, with no other change. Upstream's own remedy for an adapter that
   does not answer is "Unplug the adapter, plug it back in and try again"
