@@ -81,8 +81,17 @@ function Add-Result {
 
 function Invoke-Core {
     param([string[]]$Arguments)
-    $out = & $Core @Arguments 2>&1 | Out-String
-    return $out
+    # The core logs to stderr; with $ErrorActionPreference = 'Stop' that would
+    # abort the script on the first log line, so relax it for the call only.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $Core @Arguments 2>&1 | Out-String
+        return $out
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
 }
 
 function Get-FirmwareFiles {
@@ -120,6 +129,22 @@ if ($adapter) {
 
 $before = Get-FirmwareFiles -Dir $ConfigDir
 Write-Step ("firmware : {0} file(s) present in the config folder" -f $before.Count)
+
+if (-not $Headset) {
+    # The app keeps the known devices in devices.txt: "AA:BB:CC:DD:EE:FF|"
+    $devicesFile = Join-Path $ConfigDir 'devices.txt'
+    if (Test-Path -LiteralPath $devicesFile) {
+        $known = Get-Content -LiteralPath $devicesFile |
+            ForEach-Object { ($_ -split '\|')[0].Trim() } |
+            Where-Object { $_ -match '^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$' } |
+            Select-Object -First 1
+        if ($known) {
+            $Headset = $known
+            Write-Step "headset  : $Headset (from devices.txt)"
+        }
+    }
+}
+if ($Headset) { Write-Step "stream to: $Headset" } else { Write-Step 'stream to: none found (phase 3b will be skipped)' }
 
 if ($DryRun) {
     Write-Section 'Dry run - nothing was changed'
