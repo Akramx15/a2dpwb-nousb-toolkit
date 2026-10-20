@@ -3,9 +3,12 @@
     One-command driver for the second cold-boot round (A2DP-Windows-Bridge).
 
 .DESCRIPTION
-    The failure this verifies only reproduces when the Realtek module is COLD
-    and the firmware files are missing at that moment. This script therefore
-    prepares the next reboot:
+    This round prepares the missing-firmware case (a separate case from the
+    WinUSB binding, which only needs the device re-enumerated). With the four
+    firmware files absent, the 2.0.2+ beta names them ("firmware file missing"
+    warnings). A ROM-mode module still serves HCI, so the adapter may open
+    anyway; the open failure is not the expectation here. The script prepares
+    the next reboot:
 
       1. copies the four firmware files to a safe backup folder;
       2. installs a self-deleting entry in the user's Startup folder;
@@ -18,9 +21,9 @@
 
     and writes the output to
     %USERPROFILE%\Documents\opencode\a2db\work\cold-boot-round2.txt. The test
-    restores the .bin files, checks that the beta recreates the aliases,
-    downloads the firmware and streams, then restores all four files. The
-    Startup entry deletes itself after the run.
+    names the missing files, restores the .bin files, checks that the beta
+    recreates the aliases and downloads the firmware, streams, then restores
+    all four files. The Startup entry deletes itself after the run.
 
     Nothing is changed unless -Execute is given. -WhatIf (the default) only
     prints this plan. -Abort cancels a pending reboot and restores the files.
@@ -274,7 +277,7 @@ if (-not $Execute) {
     foreach ($line in ($startupContent -split "`r?`n")) { Write-Step "  | $line" }
     Write-Host ''
     Write-Step 'After the reboot and sign-in the test will:'
-    Write-Step '  - expect the beta to name the missing files and fail to open the adapter (cold + missing)'
+    Write-Step '  - expect the beta to name the missing files; on a ROM-mode module the adapter may still open'
     Write-Step '  - restore the .bin files and expect the aliases, firmware download and adapter open'
     Write-Step "  - stream for 20 s to $Headset and expect 0 dropped packets"
     Write-Step '  - restore all four firmware files and write the output file'
@@ -344,7 +347,7 @@ Write-Host 'WHAT TO EXPECT' -ForegroundColor Cyan
 Write-Step "The PC reboots in $RebootDelaySeconds seconds. Save your work now."
 Write-Step 'After you sign in, Windows runs the Startup entry automatically; it removes itself when done.'
 Write-Step "The test output appears in: $OutputFile"
-Write-Step 'The beta should name the missing rtl8852bu_fw.bin / rtl8852bu_config.bin and fail to open the adapter.'
+Write-Step 'The beta should name the missing rtl8852bu_fw.bin / rtl8852bu_config.bin; on a ROM-mode module the adapter may still open.'
 Write-Step 'Then it restores the .bin files, expects the aliases + firmware download, streams, and restores all four.'
 Write-Host ''
 Write-Host 'TO CANCEL BEFORE THE REBOOT' -ForegroundColor Cyan

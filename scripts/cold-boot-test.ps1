@@ -3,17 +3,30 @@
     Cold-boot verification of the Realtek firmware path (A2DP-Windows-Bridge).
 
 .DESCRIPTION
-    The Realtek module keeps the uploaded firmware in RAM, so a warm module
-    opens even with no firmware on disk. The original "failed to initialize
-    WinUSB (error 50)" only reproduces when the module is COLD and the firmware
-    files are missing at that moment. The files must therefore be removed
-    BEFORE a Windows reboot, not after a download.
+    Two independent conditions are often confused, and this script keeps them
+    apart:
+
+      * "failed to initialize WinUSB (error 50)" means the WinUSB binding is
+        not live yet. It clears only after the device is re-enumerated (unplug
+        and replug the adapter, or reboot). It is NOT caused by missing
+        Realtek firmware.
+      * Missing Realtek firmware is a separate case: the module stays in ROM
+        mode (ROM LMP 0x8852). The Realtek ROM code still serves HCI, so an
+        unpatched module can still open the adapter and bring HCI up; the
+        2.0.2+ beta then names the missing files with "firmware file missing"
+        warnings.
 
     The script adapts to the state it finds and always restores the firmware:
 
-      Mode Missing (cold + files missing at start, run right after a reboot)
-        phase 1  Expect the 2.0.2+ beta to name the missing .bin files by name
-                 and fail to open the adapter, with a Realtek firmware hint.
+      Mode Missing (files absent at start, normally run right after a reboot)
+        phase 1  Expect the 2.0.2+ beta to name the missing .bin files
+                 ("firmware file missing" warnings); that is the requirement.
+                 If the adapter still opens, report it as a NOTE: a ROM-mode
+                 module serves HCI. An open failure is recorded as an
+                 additional finding (normally the WinUSB binding is not live),
+                 never as a requirement. -StreamInPhase1 (on by default) then
+                 records, informationally, whether an unpatched ROM-mode
+                 module can stream A2DP.
         phase 2  Restore the .bin files: expect the beta to recreate the
                  extension-less aliases, download the firmware (ROM LMP
                  subversion) and open the adapter.
@@ -25,8 +38,9 @@
                  warm module is reported as PASS-with-note, because this run
                  cannot prove the cold case.
         phase 2  Informational probe: remove all four files and expect the
-                 beta to name them. A warm module may still open; that is
-                 EXPECTED and reported as PASS-with-note, not as a failure.
+                 beta to name them. A module that still has the firmware in RAM
+                 may still open; that is EXPECTED and reported as
+                 PASS-with-note, not as a failure.
         phase 3  .bin files back, aliases recreated by the app, then stream.
 
     Mode Auto (default) picks Missing when all four files are absent and
@@ -67,6 +81,12 @@
 .PARAMETER StreamSeconds
     Duration of the stream phase.
 
+.PARAMETER StreamInPhase1
+    On by default in -Mode Missing: after the missing-file probe, attempt a
+    short stream (at least 10 s) to record whether an unpatched, ROM-mode
+    module can stream A2DP. The outcome is informational and never affects the
+    phase verdict. Pass -StreamInPhase1:$false to disable it.
+
 .PARAMETER DryRun
     Report the resolved core, the mode and the phases, and change nothing.
 
@@ -92,6 +112,7 @@ param(
     [string]$Headset = '',
     [string]$Codec = 'ldac',
     [int]$StreamSeconds = 20,
+    [switch]$StreamInPhase1 = $true,
     [switch]$DryRun
 )
 
@@ -111,7 +132,7 @@ function Add-Result {
     param(
         [string]$Phase,
         [string]$Expectation,
-        [ValidateSet('PASS', 'NOTE', 'FAIL', 'SKIP')]
+        [ValidateSet('PASS', 'NOTE', 'FAIL', 'SKIP', 'INFO')]
         [string]$Status,
         [string]$Evidence = ''
     )
@@ -121,12 +142,14 @@ function Add-Result {
         'NOTE' { 'PASS (note)' }
         'FAIL' { 'FAIL' }
         'SKIP' { 'SKIPPED' }
+        'INFO' { 'INFO' }
     }
     $color = switch ($Status) {
         'PASS' { 'Green' }
         'NOTE' { 'Cyan' }
         'FAIL' { 'Red' }
         'SKIP' { 'DarkGray' }
+        'INFO' { 'Gray' }
     }
     Write-Host ("   [{0}] {1}: {2}" -f $label, $Phase, $Expectation) -ForegroundColor $color
     if ($Evidence) { Write-Step $Evidence }
@@ -326,7 +349,12 @@ if ($DryRun) {
     Write-Section 'Dry run - nothing was changed'
     if ($effectiveMode -eq 'Missing') {
         Write-Step 'Mode Missing: the files are (or will be made) absent before the reboot.'
-        Write-Step "  1. expect the beta to name rtl8852bu_fw.bin / rtl8852bu_config.bin and fail to open (scan ${ScanSeconds}s)"
+        Write-Step "  1. expect the beta to name rtl8852bu_fw.bin / rtl8852bu_config.bin (scan ${ScanSeconds}s)"
+        Write-Step '     an open on a ROM-mode module is a note, not a failure; an open failure is an additional finding'
+        if ($StreamInPhase1 -and $Headset) {
+            $p1Seconds = [Math]::Max($StreamSeconds, 10)
+            Write-Step "  1b. informational: stream to '$Headset' for ${p1Seconds}s on the unpatched module"
+        }
         Write-Step "  2. restore the .bin files from $BackupDir, expect aliases + firmware download + open (scan ${ScanSeconds}s)"
         Write-Step "  3. stream to '$Headset' for ${StreamSeconds}s (0 dropped packets expected)"
         if (-not (Test-Path -LiteralPath $BackupDir)) {
@@ -381,12 +409,12 @@ try {
             exit 2
         }
 
-        # --- phase 1: cold + missing ------------------------------------------
-        Write-Section 'Phase 1 - cold module, firmware files missing'
+        # --- phase 1: missing files -------------------------------------------
+        Write-Section 'Phase 1 - firmware files missing'
         $missingWarm = $false
         if (-not $isBeta) {
-            Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files and fails to open' `
-                -Status 'SKIP' -Evidence 'SKIPPED (needs 2.0.2+): 2.0.1 only reports the WinUSB error.'
+            Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files' `
+                -Status 'SKIP' -Evidence 'SKIPPED (needs 2.0.2+): 2.0.1 has no missing-firmware warning; it only reports the WinUSB error.'
         }
         else {
             $log1 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
@@ -397,23 +425,51 @@ try {
             $explains = ($log1 -match '(?i)realtek') -and ($log1 -match '(?i)firmware')
             $opened = $log1 -match 'USB: opened'
             $failedOpen = ($log1 -match 'cannot open the HCI transport') -or ($log1 -match 'failed to initialize WinUSB') -or ($log1 -match 'error 50')
+            $missingWarm = $opened
             $evidence = "missing-file warnings: $($warnings.Count); named fw/config: $namedFw/$namedCfg; adapter opened: $opened; open failed: $failedOpen; Realtek firmware hint: $explains"
             if ($warnings.Count -gt 0) { $evidence += "; log: $($warnings -join ' | ')" }
 
             if (-not ($namedFw -and $namedCfg)) {
-                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files and fails to open' -Status 'FAIL' -Evidence $evidence
+                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files' -Status 'FAIL' -Evidence $evidence
             }
             elseif ($opened) {
-                $missingWarm = $true
-                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files and fails to open' -Status 'NOTE' `
-                    -Evidence ("warm module: it opened although all four files were missing (expected after a download; this is not a cold run). $evidence")
+                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files' -Status 'NOTE' `
+                    -Evidence ("the adapter still opened: a ROM-mode module serves HCI, so this is expected and not a failure; the verdict is the named diagnostics. $evidence")
             }
-            elseif ($failedOpen -and $explains) {
-                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files and fails to open' -Status 'PASS' -Evidence $evidence
+            elseif ($failedOpen) {
+                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files' -Status 'PASS' `
+                    -Evidence ("additional finding: the adapter also failed to open (usually the WinUSB binding is not live; re-enumerate the device or reboot). $evidence")
             }
             else {
-                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files and fails to open' -Status 'FAIL' `
-                    -Evidence ("warning present but no decisive cold failure / Realtek hint. $evidence")
+                Add-Result -Phase 'phase 1' -Expectation 'the app names the missing firmware files' -Status 'PASS' `
+                    -Evidence ("the files were named; no open attempt was observed. $evidence")
+            }
+
+            # --- informational: can an unpatched, ROM-mode module stream? --------
+            if ($StreamInPhase1) {
+                if (-not $Headset) {
+                    Add-Result -Phase 'phase 1' -Expectation 'stream on an unpatched module (informational)' -Status 'SKIP' `
+                        -Evidence 'no headset address: the phase 1 stream probe was skipped.'
+                }
+                else {
+                    $p1Seconds = [Math]::Max($StreamSeconds, 10)
+                    Write-Section "Phase 1 (informational) - stream on the unpatched module for ${p1Seconds}s"
+                    $logP1 = Invoke-Core -Arguments @('--cli', '-d', $Headset, '-c', $Codec, '--duration', "$p1Seconds")
+                    $streamingP1 = $logP1 -match 'state Streaming: Connected'
+                    $sentP1 = [regex]::Match($logP1, 'Sent (\d+) media packets \((\d+) bytes\), (\d+) dropped')
+                    if ($streamingP1 -and $sentP1.Success) {
+                        $info = "packets=$($sentP1.Groups[1].Value) bytes=$($sentP1.Groups[2].Value) dropped=$($sentP1.Groups[3].Value)"
+                        Add-Result -Phase 'phase 1' -Expectation 'stream on an unpatched module (informational)' -Status 'INFO' `
+                            -Evidence "stream on an unpatched module: worked ($info); this does not affect the phase 1 verdict."
+                    }
+                    else {
+                        $errorsP1 = @(($logP1 -split "`r?`n") | Where-Object { $_ -match '(?i)error|warn|failed|cannot|refused|codec|l2cap|not found' } |
+                            Select-Object -First 4 | ForEach-Object { $_.Trim() })
+                        $detail = if ($errorsP1.Count -gt 0) { $errorsP1 -join ' | ' } else { 'no decisive error line' }
+                        Add-Result -Phase 'phase 1' -Expectation 'stream on an unpatched module (informational)' -Status 'INFO' `
+                            -Evidence "stream on an unpatched module: failed with $detail; this does not affect the phase 1 verdict."
+                    }
+                }
             }
         }
 
@@ -532,15 +588,15 @@ try {
                 }
                 elseif ($opened2) {
                     Add-Result -Phase 'phase 2' -Expectation 'the app names the missing firmware files' -Status 'NOTE' `
-                        -Evidence ("warm module opened although all four files were missing - EXPECTED, not a failure. The beta named the files. $evidence")
+                        -Evidence ("the adapter still opened although all four files were missing - EXPECTED, not a failure (a ROM-mode module serves HCI; a module with the firmware in RAM also keeps it). The beta named the files. $evidence")
                 }
                 elseif ($failed2) {
                     Add-Result -Phase 'phase 2' -Expectation 'the app names the missing firmware files' -Status 'PASS' `
-                        -Evidence ("cold module failed to open with a named cause. $evidence")
+                        -Evidence ("additional finding: the adapter also failed to open (usually the WinUSB binding is not live). $evidence")
                 }
                 else {
-                    Add-Result -Phase 'phase 2' -Expectation 'the app names the missing firmware files' -Status 'FAIL' `
-                        -Evidence ("warning present but no decisive open/failure outcome. $evidence")
+                    Add-Result -Phase 'phase 2' -Expectation 'the app names the missing firmware files' -Status 'PASS' `
+                        -Evidence ("the files were named; no open attempt was observed. $evidence")
                 }
             }
             finally {
@@ -624,6 +680,7 @@ $script:Results | Format-Table -AutoSize Phase, Status, Expectation | Out-String
 $failed = @($script:Results | Where-Object { $_.Status -eq 'FAIL' })
 $skipped = @($script:Results | Where-Object { $_.Status -eq 'SKIP' })
 $notes = @($script:Results | Where-Object { $_.Status -eq 'NOTE' })
+$infos = @($script:Results | Where-Object { $_.Status -eq 'INFO' })
 if ($failed.Count -gt 0) {
     Write-Host "RESULT: $($failed.Count) of $($script:Results.Count) checks failed." -ForegroundColor Red
     $exitCode = 1
@@ -632,6 +689,7 @@ else {
     $extra = @()
     if ($notes.Count -gt 0) { $extra += "$($notes.Count) pass-with-note" }
     if ($skipped.Count -gt 0) { $extra += "$($skipped.Count) skipped" }
+    if ($infos.Count -gt 0) { $extra += "$($infos.Count) informational" }
     $suffix = if ($extra.Count -gt 0) { ' (' + ($extra -join ', ') + ')' } else { '' }
     Write-Host "RESULT: all $($script:Results.Count) checks behaved as expected$suffix." -ForegroundColor Green
     $exitCode = 0
