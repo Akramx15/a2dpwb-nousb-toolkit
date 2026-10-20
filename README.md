@@ -14,7 +14,7 @@ Toolkit layout (this repo):
 | `scripts/run-emulator.ps1` | Zero-hardware end-to-end run against the Bumble virtual sink |
 | `scripts/doctor.ps1` | Read-only diagnosis + verdict |
 | `scripts/cold-boot-test.ps1` | Three-phase cold-boot check of the Realtek firmware path (run after a Windows reboot) |
-| `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app |
+| `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app — **superseded by upstream PR #82** (2.0.2-beta.1); kept for 2.0.1 source builds only |
 | `vendor-patches/` | The patched copies the diffs were generated from |
 | `docs/` | Build-from-source guide, decisions (ADRs), the root-cause account and the drafted upstream issue |
 
@@ -212,6 +212,14 @@ Known limitation of v2.0.1: the app's own chip table
 the UI/log says `chip: unknown (0x4853)`. The `patches/` in this repo fix
 that name so the UI advises the correct firmware files. BTstack itself does
 not need the app table: it already loads `rtl8852bu_fw`.
+
+**The patches here are superseded by upstream.** PR
+[SeiyaFunaokaJP/A2DP-Windows-Bridge#82](https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/pull/82)
+resolved this properly: it derives the PID-to-family mapping from BTstack's own
+firmware table at build time, so *every* PID of a known family is recognised
+(RTL8852BU alone has 19), and it shipped in **2.0.2-beta.1**. The diffs in
+`patches/` are kept only as a reference for building **2.0.1** from source;
+do not apply them to 2.0.2 or newer.
 
 ## 4. Current state of this PC (2026-10-19)
 
