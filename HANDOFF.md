@@ -32,6 +32,12 @@ time — not because the radio itself is special.
 | User confirmation | A PC song played from the headphones and the PC speakers, excellent quality, no dropouts |
 | Zero-hardware path works | `--hci-tcp` + Bumble virtual controller: LDAC / SBC / aptX HD all reached `Streaming`, 0 dropped packets |
 
+**Note on scope:** the build also produced a set of unrelated research notes
+about the headset's BLE/vendor protocol, firmware mods and using the headset as
+a PC microphone. They are **not** part of this toolkit, were never reviewed for
+correctness, and were moved out of the published tree; the repository now
+contains only the no-dongle toolkit and its documentation.
+
 **The blocker that was fixed:** `failed to initialize WinUSB (error 50)`. Cause:
 the Realtek firmware was missing, so BTstack could not boot the controller and
 the adapter never came up. Fix: install `rtl8852bu_fw.bin` (129,733 B) and
