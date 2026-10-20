@@ -41,16 +41,29 @@ script exits with code 2; use the full id to be explicit. Together with
 -Restore, -Device names the restore target instead of the automatic pick.
 
 .PARAMETER Restore
-Put the default back to the physical output. The candidates are the active
+Put the default back to the endpoint that was the default before the last
+-Device change. That endpoint (friendly name and WASAPI id) is remembered in
+the state file written by a successful -Device change; if it is still active,
+-Restore selects exactly it. When the state file is missing or the remembered
+endpoint is gone, the script falls back to the automatic pick: the active
 render endpoints whose name does not look virtual (a name containing VB-Audio
 or CABLE is virtual). When several are active, endpoints on a software device
 (their PnP parent is ROOT\ or SWD\, e.g. the Boom 3D 'Boom Audio' wrapper) are
 skipped, then the current default is kept if it is one of the rest; otherwise
 the candidates are listed and the script asks for -Device. -Device overrides
-the automatic pick.
+both the state file and the automatic pick.
+
+.PARAMETER StateFile
+Path of the small JSON state file that remembers the endpoint which was the
+default before the last successful -Device change. It holds only the friendly
+name and the WASAPI endpoint id (no user path, nothing sensitive). Default:
+%LOCALAPPDATA%\A2DPWB-toolkit\default-audio.json. The folder is created on the
+first write. -WhatIf never writes it.
 
 .PARAMETER WhatIf
-Print the plan and change nothing (standard PowerShell common parameter).
+Print the plan and change nothing (standard PowerShell common parameter). The
+plan names the endpoint that would be restored from the state file. The state
+file is not written.
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps1 -List
@@ -64,6 +77,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps1 -Restore
 
+.EXAMPLE
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps1 -Restore -StateFile D:\temp\default-audio.json
+
 .NOTES
 Changing the default output changes where EVERY application plays, not only
 A2DP-Windows-Bridge. With the virtual cable selected the PC speakers go silent
@@ -74,6 +90,10 @@ Put the physical output back with -Restore when you are done.
 Only active endpoints are listed and only the eConsole, eMultimedia and eCommunications roles
 are changed.
 
+A successful -Device change also writes the state file so that the documented
+one-command revert (-Restore) puts back exactly the endpoint that was the
+default before that change, even when several non-virtual endpoints are active.
+
 Exit codes: 0 success, 1 failure (COM error or the change did not stick),
 2 bad arguments, no matching endpoint, or an ambiguous name.
 #>
@@ -82,7 +102,8 @@ Exit codes: 0 success, 1 failure (COM error or the change did not stick),
 param(
     [switch]$List,
     [string]$Device,
-    [switch]$Restore
+    [switch]$Restore,
+    [string]$StateFile = (Join-Path -Path ([Environment]::GetFolderPath('LocalApplicationData')) -ChildPath 'A2DPWB-toolkit\default-audio.json')
 )
 
 Set-StrictMode -Version Latest
@@ -385,6 +406,44 @@ function Get-CurrentDefault {
     return $null
 }
 
+function Read-StateFile {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    try {
+        $raw = [System.IO.File]::ReadAllText($Path)
+        $data = $raw | ConvertFrom-Json
+    }
+    catch {
+        Write-Host "Warning: ignoring the unreadable state file '$Path': $($_.Exception.Message)"
+        return $null
+    }
+    if ($null -eq $data) { return $null }
+
+    $idProperty = $data.PSObject.Properties['id']
+    if ($null -eq $idProperty) { return $null }
+    $id = [string]$idProperty.Value
+    if ([string]::IsNullOrWhiteSpace($id)) { return $null }
+
+    $name = ''
+    $nameProperty = $data.PSObject.Properties['name']
+    if ($null -ne $nameProperty) { $name = [string]$nameProperty.Value }
+
+    return [pscustomobject]@{ Id = $id; Name = $name }
+}
+
+function Write-StateFile {
+    param([string]$Path, $Endpoint)
+
+    $directory = Split-Path -Parent -Path $Path
+    if (-not [string]::IsNullOrWhiteSpace($directory) -and -not (Test-Path -LiteralPath $directory)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+    $payload = [ordered]@{ name = [string]$Endpoint.Name; id = [string]$Endpoint.Id } | ConvertTo-Json -Compress
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $payload + [Environment]::NewLine, $encoding)
+}
+
 function Resolve-Target {
     param($Endpoints, [string]$Query)
 
@@ -475,13 +534,14 @@ function Select-PhysicalTarget {
 }
 
 function Show-Plan {
-    param($Endpoints, $Target, [string]$Action)
+    param($Endpoints, $Target, [string]$Action, [string]$Source)
 
     $current = Get-CurrentDefault -Endpoints $Endpoints
     $currentText = '(none reported)'
     if ($null -ne $current) { $currentText = '{0} [{1}]' -f $current.Name, $current.Id }
 
     Write-Host "Action  : $Action"
+    if (-not [string]::IsNullOrWhiteSpace($Source)) { Write-Host "Source  : $Source" }
     Write-Host "Target  : $($Target.Name)"
     Write-Host "Id      : $($Target.Id)"
     Write-Host "Virtual : $($Target.Virtual)"
@@ -511,7 +571,7 @@ function Set-DefaultEndpoint {
         if ($null -ne $default -and $default.Id -eq $Target.Id) {
             Write-Host "OK: the default render endpoint is now '$($default.Name)'."
             Write-Host "    $($default.Id)"
-            exit 0
+            return $default
         }
         Start-Sleep -Milliseconds 150
     }
@@ -544,18 +604,60 @@ try {
     if ($Restore.IsPresent) {
         if ($haveDevice) {
             $target = Resolve-Target -Endpoints $endpoints -Query $Device
+            $source = 'explicit -Device selector'
         }
         else {
-            $target = Select-PhysicalTarget -Endpoints $endpoints
+            $remembered = Read-StateFile -Path $StateFile
+            $target = $null
+            if ($null -ne $remembered) {
+                $match = @($endpoints | Where-Object { $_.Id -eq $remembered.Id })
+                if ($match.Count -eq 1) {
+                    $target = $match[0]
+                    $source = "state file '$StateFile'"
+                    Write-Host "The state file remembers this endpoint as the default before the last change: $($target.Name)"
+                }
+                else {
+                    $label = $remembered.Name
+                    if ([string]::IsNullOrWhiteSpace($label)) { $label = '(no friendly name)' }
+                    Write-Host "The remembered endpoint '$label' ($($remembered.Id)) is not active any more; falling back to the automatic pick."
+                }
+            }
+            else {
+                Write-Host "No usable state file at '$StateFile'; falling back to the automatic pick."
+            }
+            if ($null -eq $target) {
+                $target = Select-PhysicalTarget -Endpoints $endpoints
+                $source = 'automatic pick (state file missing or endpoint gone)'
+            }
         }
-        Show-Plan -Endpoints $endpoints -Target $target -Action 'restore the physical output as default'
+        Show-Plan -Endpoints $endpoints -Target $target -Action 'restore the remembered default output' -Source $source
     }
     else {
+        $previous = Get-CurrentDefault -Endpoints $endpoints
         $target = Resolve-Target -Endpoints $endpoints -Query $Device
         Show-Plan -Endpoints $endpoints -Target $target -Action 'make this render endpoint the default'
     }
 
-    Set-DefaultEndpoint -Target $target
+    $null = Set-DefaultEndpoint -Target $target
+
+    if (-not $Restore.IsPresent -and $haveDevice) {
+        if ($null -eq $previous) {
+            Write-Host 'No previous default endpoint was reported; the state file was not changed.'
+        }
+        elseif ($previous.Id -eq $target.Id) {
+            Write-Host 'The target already was the default; the state file was not changed.'
+        }
+        else {
+            try {
+                Write-StateFile -Path $StateFile -Endpoint $previous
+                Write-Host "Remembered the previous default for -Restore: $($previous.Name) [$($previous.Id)]"
+            }
+            catch {
+                Write-Host "Warning: could not write the state file '$StateFile': $($_.Exception.Message)"
+            }
+        }
+    }
+
     exit 0
 }
 catch {
