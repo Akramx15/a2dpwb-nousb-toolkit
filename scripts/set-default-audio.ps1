@@ -15,8 +15,7 @@ IMMDevice::GetId ('{0.0.0.00000000}.{...}', the value a2dpwb-core.exe takes for
 --audio-device), and the last column is `default` for the endpoint that is the
 current default for the eConsole role, `no` for the others.
 
-With -Device the script makes one endpoint the default for the eConsole and
-eMultimedia roles, which is exactly what Sound settings > Output does. The
+With -Device the script makes one endpoint the default for the eConsole, eMultimedia and eCommunications roles, which is exactly what Sound settings > Output does. The
 public MMDevice API only *reads* the default, so the write goes through the
 undocumented IPolicyConfig COM interface (CLSID_PolicyConfigClient
 {870af99c-171d-4f9e-af0d-e63df40c2bc9}). The endpoint is matched by exact id
@@ -72,7 +71,7 @@ A2DP-Windows-Bridge. With the virtual cable selected the PC speakers go silent
 virtual captures the same cable, so start the stream before you expect sound.
 Put the physical output back with -Restore when you are done.
 
-Only active endpoints are listed and only the eConsole and eMultimedia roles
+Only active endpoints are listed and only the eConsole, eMultimedia and eCommunications roles
 are changed.
 
 Exit codes: 0 success, 1 failure (COM error or the change did not stick),
@@ -283,6 +282,10 @@ namespace A2dpwb.Audio
                 if (hr != 0) throw new COMException("IPolicyConfig::SetDefaultEndpoint(eConsole) failed", hr);
                 hr = config.SetDefaultEndpoint(deviceId, ERole.eMultimedia);
                 if (hr != 0) throw new COMException("IPolicyConfig::SetDefaultEndpoint(eMultimedia) failed", hr);
+                // eCommunications too: a call app that keeps the old default would
+                // still play into the virtual cable and be inaudible.
+                hr = config.SetDefaultEndpoint(deviceId, ERole.eCommunications);
+                if (hr != 0) throw new COMException("IPolicyConfig::SetDefaultEndpoint(eCommunications) failed", hr);
             }
             finally
             {
@@ -483,7 +486,7 @@ function Show-Plan {
     Write-Host "Id      : $($Target.Id)"
     Write-Host "Virtual : $($Target.Virtual)"
     Write-Host "Current : $currentText"
-    Write-Host 'Roles   : eConsole (0), eMultimedia (1)'
+    Write-Host 'Roles   : eConsole (0), eMultimedia (1), eCommunications (2)'
 }
 
 function Set-DefaultEndpoint {
