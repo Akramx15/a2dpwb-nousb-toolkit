@@ -5,10 +5,10 @@ Date: 2026-10-20. Build: A2DP-Windows-Bridge **2.0.2-beta.1** (portable),
 `2.0.2-beta.1`, beta = yes. Paths below are sanitized (`%APPDATA%`,
 `%LOCALAPPDATA%`, `<repo>`); the numbers and log lines are verbatim.
 
-The host was **not** rebooted for this check. The module was warm ("Firmware
-already exists") and all four firmware files were present. The cold + missing
-case is therefore armed by `scripts/cold-boot-round2.ps1` and still has to run
-after a reboot.
+This run was **warm**, so the sections below record the warm path and the
+driver plan. The cold run itself was done later, after a real reboot, with all
+four files removed beforehand; its result is in `docs/UPSTREAM-BETA-TEST.md`
+("Round 2") and in `docs/ROOT-CAUSE.md`.
 
 ## 1. Parse check (PowerShell 5.1 parser)
 
@@ -84,7 +84,8 @@ RESULT: all 4 checks behaved as expected (2 pass-with-note).
 ```
 
 Exit code 0. This proves the branch and the restore logic; it does **not**
-reproduce the cold failure (the module was warm).
+exercise the cold path (the module was warm). The cold result after a real
+reboot is in `docs/UPSTREAM-BETA-TEST.md` ("Round 2").
 
 ## 5. Round-2 driver plan (`-WhatIf`)
 

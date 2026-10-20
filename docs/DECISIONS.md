@@ -39,7 +39,12 @@ every recorded adapter with one UAC prompt; `restart` uses
 
 **Consequences.** Recovery is two commands and is idempotent and verifiable
 (`doctor.ps1` shows `kind` from the helper). A reboot may still be required
-after `assign` (error 50) and occasionally after `restore`.
+after `assign` and occasionally after `restore`. Two causes were conflated at
+first (D7, `docs/ROOT-CAUSE.md`): `failed to initialize WinUSB (error 50)` is the
+binding not being live until the device is re-enumerated (the record says
+`reboot_required: true`; unplug/replug is upstream's remedy), while the missing
+Realtek firmware is a separate condition that leaves the module in ROM mode but
+does not stop the adapter from opening.
 
 **Status.** Accepted.
 
@@ -133,3 +138,37 @@ the headset from Windows' pairing is not needed once A2DPWB has its own key.
 If the key is ever lost, repeat the procedure (the `0x66` refusal returns).
 
 **Status.** Accepted.
+
+## D7 - A cold unpatched Realtek module opens; the missing firmware is not error 50
+
+**Context.** The first write-up attributed `failed to initialize WinUSB (error
+50)` to the missing Realtek firmware, because the firmware was installed and
+the adapter then opened in the same sitting. A cold-boot experiment on
+2026-10-20 disproved the causal link: after a real Windows reboot with all four
+firmware files removed from `%APPDATA%\A2DPWB`, the unpatched 2.0.2-beta.1
+module still opened the adapter and brought HCI up, with two
+`firmware file missing:` warnings. Restoring only the `.bin` files made the app
+recreate the aliases, upload the firmware and re-open the adapter; the stream
+then ran with 0 dropped packets. Details: `docs/UPSTREAM-BETA-TEST.md`,
+`docs/ROOT-CAUSE.md`.
+
+**Decision.** Record and document the two causes as independent. Error 50 means
+the WinUSB binding is not live yet: the driver record says
+`"reboot_required": true` at assign time, upstream calls
+`uninstall_and_reenumerate(...)` (`app/src/crates/win-sys/src/driver.rs:359`)
+and its remedy for an adapter that does not answer is unplug/replug
+(`docs/usage.md:472`). The missing firmware is detected **by name**
+(`WARN firmware file missing: ...` in 2.0.2-beta.1), not by an open failure; it
+leaves the module in ROM mode and is fixed by installing `rtl8852bu_fw.bin` /
+`rtl8852bu_config.bin` into `%APPDATA%\A2DPWB`.
+
+**Consequences.** "The adapter cannot open" must not be read as a firmware
+symptom, and "the adapter opened" must not be read as proof that the firmware
+was loaded. Both docs and the upstream draft state the corrected causality; the
+chip-table request, the setup-guide wording request and the `0x66` / `0x67`
+troubleshooting note are unaffected. Reproduce the cold case: remove all four
+files from `%APPDATA%\A2DPWB`, reboot, then run
+`powershell -File scripts\cold-boot-test.ps1 -Mode Missing`.
+
+**Status.** Accepted. Supersedes the causal claim in the first HANDOFF/README
+draft and in the first upstream draft.

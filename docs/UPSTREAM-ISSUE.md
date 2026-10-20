@@ -2,7 +2,7 @@
 
 Post to: <https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues>
 
-**Title:** Support for Realtek PID 0x4853 (RTL8852BU) + misleading "WinUSB error 50" when the Realtek firmware is missing
+**Title:** Support for Realtek PID 0x4853 (RTL8852BU) + a log hint when the Realtek firmware is missing
 
 Copy the body below:
 
@@ -15,17 +15,45 @@ Copy the body below:
 - Headset: the headset, classic A2DP, address `<HEADSET_MAC>`, LE Audio switched **off** on the headset.
 - The adapter is bound to WinUSB by `a2dpwb-driver.exe`; the Realtek firmware lives in `%APPDATA%\A2DPWB`.
 
-### 2) What happens, and the real cause
+### 2) What happens, and the corrected cause
 
-The Adapter screen reports `chip: unknown (0x4853)`, so the setup flow cannot tell the user which firmware to fetch. The core then fails with:
+The Adapter screen reports `chip: unknown (0x4853)`, so the setup flow cannot
+tell the user which firmware to fetch. The core then failed with:
 
 ```
 USB: cannot claim interface 0 of 0BDA:4853: failed to initialize WinUSB (error 50)
 ```
 
-`error 50` is `ERROR_NOT_SUPPORTED`, which reads like a WinUSB or driver problem. The **real cause is the missing Realtek firmware**: without it BTstack cannot boot the controller, so the HCI endpoints are never initialised and the interface claim fails.
+`error 50` is `ERROR_NOT_SUPPORTED`, which reads like a WinUSB or driver
+problem. It is neither that nor the firmware: it means the **WinUSB binding is
+not live yet**. The helper flags that at assign time — its driver record says
+`"reboot_required": true` — and the code re-enumerates the device
+(`uninstall_and_reenumerate(...)` in `app/src/crates/win-sys/src/driver.rs:359`).
+The first scan 7 seconds after the assign failed with error 50; the same adapter
+opened as soon as it was re-enumerated, with no other change. Your own remedy
+for an adapter that does not answer is "Unplug the adapter, plug it back in and
+try again" (`docs/usage.md`).
 
-Adding `rtl8852bu_fw.bin` and `rtl8852bu_config.bin` (plus the extension-less aliases `rtl8852bu_fw` / `rtl8852bu_config` that BTstack opens) into the config folder fixed it immediately — **no reboot and no administrator rights** were needed. The WinUSB binding itself was correct; the firmware was the only missing piece.
+The missing Realtek firmware is a **separate** issue and does not produce error
+50. Cold-boot test (a real Windows reboot, all four firmware files removed from
+`%APPDATA%\A2DPWB` beforehand, build 2.0.2-beta.1):
+
+- with no firmware on disk the adapter opened and HCI came up:
+  `INFO USB: opened 0BDA:4853 ... (event 0x81, ACL 0x82/0x02)` /
+  `INFO HCI ready (took 102 ms)`, alongside
+  `WARN firmware file missing: %APPDATA%\A2DPWB\rtl8852bu_fw.bin` and
+  `WARN firmware file missing: %APPDATA%\A2DPWB\rtl8852bu_config.bin`;
+- after restoring only the `.bin` files, the app recreated the extension-less
+  aliases, uploaded the firmware and re-opened the adapter:
+  `ROM LMP subversion: 0x8852; download ran: True` and
+  `alias rtl8852bu_fw: True; alias rtl8852bu_config: True`.
+
+The Realtek ROM code therefore serves HCI well enough for the adapter to open.
+The missing firmware means the module stays in **ROM mode** — the chip is not
+patched — not that the adapter cannot open. What 2.0.1 could not do is *name*
+the files, because of the chip-table gap in section 3; the
+`firmware file missing` warning in 2.0.2-beta.1 is exactly the signal that case
+needs.
 
 ### 3) The specific gap: `REALTEK_CHIPS` has no entry for `0x4853`
 
@@ -38,7 +66,7 @@ BTstack's own table already maps this part (`extern/btstack/chipset/realtek/btst
 but `app/src/crates/bt-host/src/chips.rs` (`REALTEK_CHIPS`) has no entry for `0x4853`. Adding one would let the app:
 
 - say `chip: RTL8852BU (0x4853)` instead of `unknown`;
-- tell the user to fetch `rtl8852bu_fw.bin` / `rtl8852bu_config.bin` (or offer the download) instead of leaving `error 50` as the only symptom;
+- tell the user to fetch `rtl8852bu_fw.bin` / `rtl8852bu_config.bin` (or offer the download) instead of leaving the missing firmware unnamed;
 - list this chip as verified on the Adapter screen.
 
 BTstack itself does not need the app table — it already loads `rtl8852bu_fw` — but the UI and the setup guidance do.
@@ -64,7 +92,7 @@ With the firmware in place, the same stock binaries stream over the internal ada
 - 56,285 media packets, 0 dropped over a 5-minute session;
 - stable `state Streaming: Connected`, confirmed by ear.
 
-So the BTstack / Realtek / WinUSB path is sound on an internal USB adapter. The two real gaps are the chip-table entry and the misleading firmware error.
+So the BTstack / Realtek / WinUSB path is sound on an internal USB adapter. The two real gaps are the chip-table entry and a nameable missing-firmware warning.
 
 Thanks for A2DPWB — it is the only Windows A2DP source I found that actually reaches LDAC over a user-mode BTstack controller. The report above is meant to make that path easier to reach for the next person; I am happy to test a patch or provide logs.
 ````

@@ -38,12 +38,28 @@ a PC microphone. They are **not** part of this toolkit, were never reviewed for
 correctness, and were moved out of the published tree; the repository now
 contains only the no-dongle toolkit and its documentation.
 
-**The blocker that was fixed:** `failed to initialize WinUSB (error 50)`. Cause:
-the Realtek firmware was missing, so BTstack could not boot the controller and
-the adapter never came up. Fix: install `rtl8852bu_fw.bin` (129,733 B) and
-`rtl8852bu_config.bin` (6 B) into `%APPDATA%\A2DPWB` (plus the extension-less
-aliases `rtl8852bu_fw` / `rtl8852bu_config` that BTstack reads). No reboot, no
-Administrator rights, no driver change were required for this.
+**The blocker that was fixed:** `failed to initialize WinUSB (error 50)`. There
+were **two independent causes**, not one — full account in `docs/ROOT-CAUSE.md`.
+
+* **Error 50 was the WinUSB binding not being live yet.** The helper flags it at
+  assign time (the driver record says `"reboot_required": true`) and upstream
+  re-enumerates the device (`uninstall_and_reenumerate(...)` in
+  `app/src/crates/win-sys/src/driver.rs:359`). The first scan 7 s after the
+  assign failed with error 50; the same adapter opened as soon as the device was
+  re-enumerated, with no other change. Upstream's own remedy for an adapter that
+  does not answer is "Unplug the adapter, plug it back in and try again"
+  (`docs/usage.md:472`); `usb-driver.ps1 -Mode restart` does the same in
+  software.
+* **The missing Realtek firmware was a separate, second issue.** Without it the
+  module stays in ROM mode — the chip is not patched — but the adapter still
+  opens and serves HCI from ROM (measured on a cold module after a real reboot,
+  D7). The app could not *name* the files because of the chip-table gap for PID
+  `0x4853`; upstream fixed that with PR #82 / 2.0.2-beta.1, whose
+  `firmware file missing: ...` warnings are the right signal for this case.
+  Install `rtl8852bu_fw.bin` (129,733 B) and `rtl8852bu_config.bin` (6 B) into
+  `%APPDATA%\A2DPWB`, plus the extension-less aliases `rtl8852bu_fw` /
+  `rtl8852bu_config` that BTstack reads; no reboot, no Administrator rights and
+  no driver change are needed for that.
 
 **First pairing: resolved.** Two L2CAP codes came from upstream/BTstack
 constants, not from a toolkit bug:
@@ -122,11 +138,13 @@ The goal is met. These are improvements, not blockers:
    manual and the known blockers.
 3. `scripts\stream.ps1` — the daily path; every flag maps to
    `upstream/app/src/core/src/cli.rs`.
-4. `docs/DECISIONS.md` — D1..D6, especially D2 (restore), D5 (loopback vs
-   virtual) and D6 (LE Audio off / phone disconnected).
-5. `scripts/doctor.ps1` — single source of truth for current state.
-6. `docs/BUILD-FOR-SOURCE.md` — only if a build becomes necessary.
-7. Upstream reference (read-only): `upstream/app/src/core/src/cli.rs` (every
+4. `docs/DECISIONS.md` — D1..D7, especially D2 (restore), D5 (loopback vs
+   virtual), D6 (LE Audio off / phone disconnected) and D7 (error 50 is the
+   WinUSB binding, not the firmware).
+5. `docs/ROOT-CAUSE.md` — the two independent causes with their evidence.
+6. `scripts/doctor.ps1` — single source of truth for current state.
+7. `docs/BUILD-FOR-SOURCE.md` — only if a build becomes necessary.
+8. Upstream reference (read-only): `upstream/app/src/core/src/cli.rs` (every
    flag the launcher uses), `upstream/app/src/driver/src/main.rs` (helper CLI),
    `upstream/app/src/crates/bt-host/src/chips.rs` (chip table),
    `upstream/app/src/crates/core/src/adapter.rs` (the `chip:` log line).

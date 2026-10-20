@@ -16,7 +16,7 @@ Toolkit layout (this repo):
 | `scripts/cold-boot-test.ps1` | Three-phase cold-boot check of the Realtek firmware path (run after a Windows reboot) |
 | `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app |
 | `vendor-patches/` | The patched copies the diffs were generated from |
-| `docs/` | Build-from-source guide, decisions (ADRs) and the drafted upstream issue |
+| `docs/` | Build-from-source guide, decisions (ADRs), the root-cause account and the drafted upstream issue |
 
 `../upstream/` is the read-only reference clone of v2.0.1. **Never edit or
 commit it.**
@@ -35,11 +35,13 @@ project, which carries the Realtek `rtl8852bu_fw` / `rtl8852bu_config` blobs
 used by BTstack's Realtek chipset driver. Thanks also to the Realtek/BTstack
 chipset driver work that makes an off-the-shelf RTL8852BU usable on Windows.
 
-The findings here (the missing-firmware root cause of the misleading
-`WinUSB error 50`, the chip-table gap for PID `0x4853`, and the first-pairing
-behaviour of LE-Audio-capable headsets) were reported upstream:
+The findings here (why `WinUSB error 50` appears — the binding is not live until
+the device is re-enumerated — the separate missing-firmware / ROM-mode case,
+the chip-table gap for PID `0x4853`, and the first-pairing behaviour of
+LE-Audio-capable headsets) were reported upstream:
 <https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues/81>
-The draft is kept in `docs/UPSTREAM-ISSUE.md`.
+The draft is kept in `docs/UPSTREAM-ISSUE.md`; the corrected causal account is
+in `docs/ROOT-CAUSE.md`.
 
 **Licensing:** personal, non-commercial use only — see `NOTICE.md`. A2DPWB
 embeds BTstack, whose licence does not allow commercial use or redistribution
@@ -220,14 +222,20 @@ Historical setup state; the verified streaming result is in the top section.
 | Adapter instance | `USB\VID_0BDA&PID_4853\00E04C0000XX` |
 | Current driver | `winusb.inf` / service `WINUSB` (WinUSB Device) |
 | Previous driver (recorded) | `oem197.inf`, Realtek, service `BTHUSB`, `reboot_required: true` |
-| WinUSB open result | **opens** (the former `failed to initialize WinUSB (error 50)` was cleared by the firmware install/reconnect) |
+| WinUSB open result | **opens** (the former `failed to initialize WinUSB (error 50)` was the binding not being live; it cleared once the device was re-enumerated) |
 | Firmware in `%APPDATA%\A2DPWB` | **present and shape-valid** (129,733-byte firmware, 6-byte config, installed 20:20) |
 | App binaries | `a2dpwb-core.exe`, `a2dpwb-driver.exe`, `a2dpwb.exe` present |
 | Toolchain | Rust 1.97, Node 24; **no MSVC C++ compiler** in `C:\BuildTools`; no `pnpm`; no `pwsh` |
 
-Error 50 (`ERROR_NOT_SUPPORTED`) is what this Realtek part reports **after**
-the first WinUSB binding until Windows can restart the interface. It is no
-longer the state of this PC: the adapter has opened and streamed LDAC.
+`failed to initialize WinUSB (error 50)` is `ERROR_NOT_SUPPORTED`, but it does
+not mean the driver or the firmware is wrong: the WinUSB binding is simply not
+live yet. The helper records `reboot_required: true` at assign time and
+re-enumerates the device; the adapter opens as soon as that has happened
+(unplug/replug, `usb-driver.ps1 -Mode restart`, or a reboot). The firmware is a
+**separate** requirement: it patches the controller out of ROM mode. A cold,
+unpatched module still opens the adapter and serves HCI from its ROM code — so
+"the adapter cannot open" must never be read as "the firmware is missing".
+`docs/ROOT-CAUSE.md` carries the evidence for both.
 
 ## 5. Recovery: give the adapter back to Windows
 
@@ -331,15 +339,17 @@ action" is the one thing to do), `2` = the doctor itself failed.
    with C++" workload (`cl.exe` absent), so any `cargo build` of the C parts
    fails. The happy path uses the installed v2.0.1 binaries; see
    `docs/BUILD-FOR-SOURCE.md` before building.
-2. **WinUSB error 50 after a fresh `assign`.** Expected until the interface
-   can restart; the record says `reboot_required: true`. Reboot (or
-   `usb-driver.ps1 restart` elevated) before expecting a stream. On this PC
-   the adapter is past that state and LDAC is verified.
+2. **WinUSB error 50 after a fresh `assign`.** The binding is not live yet — the
+   record says `reboot_required: true`. Unplug/replug, run
+   `usb-driver.ps1 -Mode restart`, or reboot before expecting a stream. This is
+   not a firmware symptom (see `docs/ROOT-CAUSE.md`). On this PC the adapter is
+   past that state and LDAC is verified.
 3. **Firmware version.** The firmware currently installed is shape-valid but
-   not the exact build the toolkit's mirrors serve; if BTstack fails to boot,
-   re-run `fetch-realtek-fw.ps1 -Force` to install the mirror build, then
-   restart the adapter. Without any `rtl8852bu_fw` / `rtl8852bu_config`,
-   BTstack cannot boot the controller at all.
+   not the exact build the toolkit's mirrors serve; if you want the mirror
+   build, re-run `fetch-realtek-fw.ps1 -Force`, then restart the adapter.
+   Without any `rtl8852bu_fw` / `rtl8852bu_config` the module stays in ROM mode
+   (unpatched); it still opens and serves HCI, so the missing files do not
+   produce `error 50`.
 4. **`pnpm` and PowerShell 7 missing.** Needed only for the UI build and
    `build.ps1`; the core and the emulator do not need them.
 5. **Resident core is USB-only.** The emulator cannot be driven from the

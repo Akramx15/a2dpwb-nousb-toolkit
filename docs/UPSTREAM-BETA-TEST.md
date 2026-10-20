@@ -40,7 +40,7 @@ a way to fix it:
 
 ### One observation worth documenting
 
-With the files removed, **the adapter still opened**:
+With the files removed, **the adapter still opened** on a warm module:
 
 ```
 INFO USB: opened 0BDA:4853 USB\VID_0BDA&PID_4853\00E04C0000XX (event 0x81, ACL 0x82/0x02)
@@ -50,15 +50,55 @@ INFO HCI ready (took 98 ms)
 ```
 
 The Realtek module keeps the uploaded firmware in RAM, so a **warm** module
-boots even with no firmware on disk. The original `failed to initialize WinUSB
-(error 50)` only reproduces on a **cold** module (after a power cycle / PC
-reboot) with no firmware on disk. Two consequences:
+boots even with no firmware on disk.
+
+`failed to initialize WinUSB (error 50)` is **not** a firmware symptom, and
+"only reproduces on a cold module" was the wrong reading of the correlation. It
+means the WinUSB binding is not live yet: the helper's driver record says
+`"reboot_required": true` at assign time and the adapter opens once the device
+is re-enumerated (upstream's remedy: unplug/replug). The missing firmware is a
+separate, nameable condition that leaves the module in ROM mode.
+
+Two consequences:
 
 - the new warning is the reliable signal — the adapter may still open while the
   firmware files are missing, so the warning must not be read as "it works";
-- a troubleshooting note like *"if the firmware files are missing, the error
-  appears only after a reboot; with a warm module the adapter opens and the
-  firmware is not re-downloaded"* would save a lot of confusion.
+- a troubleshooting note like *"the adapter opening is not proof that the
+  firmware was loaded; check for `firmware file missing`"* would save a lot of
+  confusion.
+
+### Round 2: cold module, no firmware on disk
+
+After a real Windows reboot, with all four files removed from `%APPDATA%\A2DPWB`
+beforehand (build 2.0.2-beta.1):
+
+| Phase | `%APPDATA%\A2DPWB` | Result |
+|---|---|---|
+| 1 | nothing | the adapter **opened** and HCI came up, with both `firmware file missing` warnings |
+| 2 | only the `.bin` files | the app recreated the extension-less aliases, uploaded the firmware and re-opened the adapter |
+| 3 | patched module | LDAC, 3,783 packets, 0 dropped |
+
+Phase 1 — the ROM code alone is enough to open the adapter and serve HCI:
+
+```
+INFO USB: opened 0BDA:4853 ... (event 0x81, ACL 0x82/0x02)
+INFO HCI ready (took 102 ms)
+WARN firmware file missing: %APPDATA%\A2DPWB\rtl8852bu_fw.bin
+WARN firmware file missing: %APPDATA%\A2DPWB\rtl8852bu_config.bin
+```
+
+Phase 2 — the firmware path still works when the `.bin` files come back:
+
+```
+ROM LMP subversion: 0x8852; download ran: True
+alias rtl8852bu_fw: True; alias rtl8852bu_config: True
+```
+
+Phase 3 — `state Streaming: Connected`, 3,783 media packets, 0 dropped.
+
+So a cold, unpatched module opens and serves HCI from ROM. What the firmware
+buys is a **patched** module, not an openable one; the `firmware file missing`
+warning is how that case is detected by name.
 
 ## Step 2 — the Adapter screen
 
