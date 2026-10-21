@@ -79,11 +79,27 @@ The files are moved once, on the first run of the new build. The UI has
 ## 4. The diagnostic bundle, scrubbed
 
 `docs/evidence/a2dpwb-diag-2.0.2-beta.5-rtl8852bu-scrubbed.zip` is the bundle
-from **Diagnostics > Report a problem > Save** of this beta.5 run, with the
-user profile path removed and the raw Bluetooth addresses of both devices
-zeroed in the HCI capture. Its `logs/a2dpwb-core.2026-10-21.log` contains the
-whole day, so beta.4's misleading line and beta.5's correct ones sit next to
-each other:
+from **Diagnostics > Report a problem > Save** of this beta.5 run. What was
+removed from it, and what is still in it:
+
+| Item | State in the archive |
+|---|---|
+| the user profile path | removed - only `%USERPROFILE%` / `%APPDATA%` remain |
+| the adapter's Bluetooth address | zeroed in the HCI capture |
+| the headset's Bluetooth address | zeroed in the HCI capture **and** in the log lines where it appeared in full |
+| the adapter's USB serial number | masked (`00E04C0000XX`) - it stays readable in this repository's text files, because the reproduction commands need the exact instance id |
+| the USB instance id of an unrelated ADB device that happened to be attached | masked |
+| the OUI prefix of both devices (`46:62:99:xx:xx:xx`) | left as the application writes it; the last three bytes are `xx` |
+| the HCI capture | 120 bytes - a header, no packets |
+
+The first version of this archive was not scrubbed consistently: the headset's
+full address was still present in two lines of `logs/a2dpwb-core.2026-10-19.log`
+and the adapter's USB serial in 19 lines. It was re-scrubbed; the file in this
+repository is the corrected one. The other evidence in this document is
+unaffected.
+
+Its `logs/a2dpwb-core.2026-10-21.log` contains the whole day, so beta.4's
+misleading line and beta.5's correct ones sit next to each other:
 
 ```
 12:24:48 INFO bt_host::app: Realtek firmware download ran (ROM LMP subversion 0x8852); not verified   <- beta.4
