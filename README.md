@@ -260,8 +260,8 @@ Setup state; the verified streaming result is in the top section.
 | Current driver | `winusb.inf` / service `WINUSB` (WinUSB Device) |
 | Previous driver (recorded) | `oem197.inf`, Realtek, service `BTHUSB`, `reboot_required: true` |
 | WinUSB open result | **opens** (the former `failed to initialize WinUSB (error 50)` was the binding not being live; it cleared once the device was re-enumerated) |
-| Firmware in `%APPDATA%\A2DPWB` | **present and shape-valid** (129,733-byte firmware, 6-byte config, installed 20:20) |
-| Virtual cable | **VB-CABLE installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`); Windows default output left on `CABLE Input` — revert per `docs/HEADPHONES-ONLY.md` |
+| Firmware in `%APPDATA%\A2DPWB` | **present** (129,733-byte firmware; since 2.0.2 the chip table has `config: None` for the RTL8852BU, so the app writes a 0-byte `rtl8852bu_config.bin` and BTstack uses the efuse settings — a 6-byte config streams the same) |
+| Virtual cable | **VB-CABLE installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`); the Windows default output is currently **`Speakers (Realtek(R) Audio)`** — the headphones-only route and its one-command revert are in `docs/HEADPHONES-ONLY.md` |
 | App binaries | `a2dpwb-core.exe`, `a2dpwb-driver.exe`, `a2dpwb.exe` present |
 | Toolchain | Rust 1.97, Node 24; **no MSVC C++ compiler** in `C:\BuildTools`; no `pnpm`; no `pwsh` |
 
@@ -352,7 +352,10 @@ rejects), then raw GitHub mirrors of `linux-firmware`
 6-byte `rtl8852bu_config.bin` (SHA-256
 `6c28a3f07c6a30ed208c4b64862a23f02b7d93543ea980edd24df16bab45095f`);
 the currently installed firmware is a different, larger build but passes the
-same magic checks.
+same magic checks. Since 2.0.2 the app's **own** download writes a **0-byte**
+`rtl8852bu_config.bin` instead (its chip table has `config: None` for the
+RTL8852BU), and BTstack then uses the efuse settings: a 0-byte and a 6-byte
+config both stream LDAC with 0 dropped packets.
 
 ## 8. Run mode B - emulator (no hardware)
 

@@ -14,12 +14,17 @@ time — not because the radio itself is special.
 
 **Current machine state (2026-10-21).** The installed app is
 **2.0.2-beta.4** (official NSIS installer, `currentUser`, installed over
-2.0.1), and the chip now resolves as `chip: RTL8852BU (0BDA)`. **VB-CABLE is
-installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`) and the Windows
-default output is intentionally left on `CABLE Input` for headphones-only
-audio. One command puts the speakers back:
+2.0.1), and the chip now resolves as `chip: RTL8852BU (0xBDA:4853 -> 0xB85B)`.
+**VB-CABLE is installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`).
+The Windows default output is currently **`Speakers (Realtek(R) Audio)`** — the
+headphones-only route is a recipe, not the default state. Both directions:
 
 ```powershell
+# to the headphones-only route
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps1 `
+  -Device "CABLE Input (VB-Audio Virtual Cable)"
+
+# and back
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-default-audio.ps1 `
   -Restore -Device "Speakers (Realtek(R) Audio)"
 ```
@@ -106,8 +111,8 @@ were **two independent causes**, not one — full account in `docs/ROOT-CAUSE.md
   D7). The app could not *name* the files because of the chip-table gap for PID
   `0x4853`; upstream fixed that with PR #82 / 2.0.2-beta.1, whose
   `firmware file missing: ...` warnings are the right signal for this case.
-  Install `rtl8852bu_fw.bin` (129,733 B) and `rtl8852bu_config.bin` (6 B) into
-  `%APPDATA%\A2DPWB`; no reboot, no Administrator rights and no driver change
+   Install `rtl8852bu_fw.bin` (129,733 B) and `rtl8852bu_config.bin` into
+   `%APPDATA%\A2DPWB`; no reboot, no Administrator rights and no driver change
   are needed for that. 2.0.2+ uses the `.bin` files and does not need the
   extension-less copies (`-LegacyAliases` exists only for 2.0.1); the app
   removes identical copies on a scan. Cold-boot round 2 added the decisive
