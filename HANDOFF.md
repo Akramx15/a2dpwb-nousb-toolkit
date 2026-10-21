@@ -176,6 +176,12 @@ this ("the first time is the test, then it just works").
 * `patches/0001-...` and `patches/0002-...` apply cleanly to upstream
   (`git apply --check` passes). Upstream is untouched
   (`git -C upstream status --porcelain` → empty).
+* `scripts/scrub-diagnostics.ps1` — removes the device identifiers from a
+  diagnostic bundle before publishing it (Bluetooth addresses, the adapter's
+  USB serial, other USB instance ids) and refuses to write an archive in
+  which any identifier survives. The published bundle in `docs/evidence/` was
+  re-scrubbed with it; the correction to the upstream issue is
+  `issuecomment-6327168792` on `SeiyaFunaokaJP/A2DP-Windows-Bridge#81`.
 
 ## Blocked
 
@@ -194,10 +200,22 @@ The goal is met. These are improvements, not blockers. (The former item
 "virtual-device-only audio" is **done**: VB-CABLE is installed — see
 `docs/HEADPHONES-ONLY.md` and D8.)
 
-1. **96 kHz LDAC at 990 kbps.** Set the Windows playback format for the
-   output device to 96 kHz (Settings > System > Sound > device > Format), then
-   run `scripts\stream.ps1 -Rate 96000 -Codec ldac -Quality hq`. The verified
-   run was 48 kHz.
+1. **96 kHz LDAC at 990 kbps - assessed, not reachable on this PC's onboard
+   codec.** The rate is not a codec setting: the app captures the default
+   render endpoint through a WASAPI loopback, and the Windows audio engine
+   mixes at the **endpoint's own** format. The default output here is
+   `Speakers (Realtek(R) Audio)`, an Intel SST (Intel HD Audio) device whose
+   bus is natively 48 kHz, so the loopback hands the app 48 kHz frames and
+   `LDAC: initialized (rate=48000, ...)` is the ceiling. Asking for
+   `-Rate 96000` against a 48 kHz endpoint does not add information: the
+   encoder would carry interpolated samples at twice the CPU cost. To reach
+   96 kHz the endpoint itself has to run at 96 kHz (Settings > System > Sound >
+   device > Format), which needs either a codec that supports it or a
+   high-resolution virtual device such as the installed Boom Audio endpoint.
+   The bitrate is unaffected: LDAC already runs at 990 kbps at 48 kHz, and the
+   audible difference between 990 kbps at 48 kHz and at 96 kHz is small.
+   `scripts\stream.ps1 -Rate 96000 -Codec ldac -Quality hq` is the command
+   once the source is at 96 kHz.
 2. **ABR.** Try `scripts\stream.ps1 -Abr` when the RF conditions vary; it maps
    to `-a` (LDAC / LHDC V5).
 3. **GUI/tray app for daily use.** `a2dpwb.exe` exposes the same core with a
@@ -223,7 +241,7 @@ The goal is met. These are improvements, not blockers. (The former item
    revert command (also the current state of this PC's default output).
 6. `docs/UNPATCHED-MODULE.md` — the cold-boot finding and its reproduction.
 7. `docs/ROOT-CAUSE.md` — the two independent causes with their evidence.
-8. `docs/UPSTREAM-2.0.2.md` — what changed in 2.0.2-beta.4 and the measured
+8. `docs/UPSTREAM-2.0.2.md` — what changed in 2.0.2-beta.5 and the measured
    firmware behaviour.
 9. `scripts/doctor.ps1` — single source of truth for current state.
 10. `docs/BUILD-FOR-SOURCE.md` — only if a build becomes necessary.

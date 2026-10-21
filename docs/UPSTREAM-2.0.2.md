@@ -1,6 +1,6 @@
 # Upstream 2.0.1 -> 2.0.2-beta.5: what changed for this toolkit
 
-Date: 2026-10-21. Target build: **A2DP-Windows-Bridge 2.0.2-beta.4** on the
+Date: 2026-10-21. Target build: **A2DP-Windows-Bridge 2.0.2-beta.5** on the
 internal Realtek RTL8852BU (`USB\VID_0BDA&PID_4853`). This note records the
 changes the scripts and the documented expectations depend on; the historical
 2.0.1/beta.1 evidence stays in `docs/ROOT-CAUSE.md` and
@@ -8,7 +8,7 @@ changes the scripts and the documented expectations depend on; the historical
 
 ## Summary
 
-| Area | 2.0.1 | 2.0.2-beta.4 |
+| Area | 2.0.1 | 2.0.2-beta.5 |
 |:--|:--|:--|
 | WinUSB `error 50` | binding not live until Windows re-enumerated the device; the record said `reboot_required: true` | **retired**: the app restarts the device itself after the assign (`reboot_required: false`) |
 | Chip naming | `chip: unknown (0x4853)` | every PID of a known Realtek family resolves from BTstack's firmware table |

@@ -240,7 +240,7 @@ Known limitation of v2.0.1: the app's own chip table
 the UI/log says `chip: unknown (0x4853)`. The `patches/` in this repo fix
 that name so the UI advises the correct firmware files. BTstack itself does
 not need the app table: it already loads `rtl8852bu_fw`. The installed
-**2.0.2-beta.4** resolves it on this PC:
+**2.0.2-beta.5** resolves it on this PC:
 `chip: RTL8852BU (0BDA:4853 -> 0xB85B) (auto)`.
 
 **The patches here are superseded by upstream.** PR
@@ -397,7 +397,7 @@ doctor itself failed.
 
 1. **No MSVC C++ compiler.** `C:\BuildTools` lacks the "Desktop development
    with C++" workload (`cl.exe` absent), so any `cargo build` of the C parts
-   fails. The happy path uses the installed 2.0.2-beta.4 binaries; see
+   fails. The happy path uses the installed 2.0.2-beta.5 binaries; see
    `docs/BUILD-FOR-SOURCE.md` before building.
 2. **WinUSB error 50 after a fresh `assign` (historical).** On 2.0.1 the
    binding was not live until Windows re-enumerated the device and the record
