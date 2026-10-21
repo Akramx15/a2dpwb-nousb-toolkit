@@ -1,4 +1,4 @@
-# Upstream 2.0.1 -> 2.0.2-beta.4: what changed for this toolkit
+# Upstream 2.0.1 -> 2.0.2-beta.5: what changed for this toolkit
 
 Date: 2026-10-21. Target build: **A2DP-Windows-Bridge 2.0.2-beta.4** on the
 internal Realtek RTL8852BU (`USB\VID_0BDA&PID_4853`). This note records the
@@ -126,9 +126,77 @@ and none are needed.**
 
 ## 8. Residual notes
 
-* This toolkit targets **2.0.2-beta.4**; 2.0.1 remains supported only through
+* This toolkit targets **2.0.2-beta.5**; 2.0.1 remains supported only through
   the `-LegacyAliases` path and the legacy expectations in the cold-boot
   scripts.
 * The `reboot_required` field can still read `true` in an old driver record
   written by an earlier helper. With 2.0.2+ that indicates a stale record, not
   a required reboot.
+
+## 9. 2.0.2-beta.5 (what changed since beta.4)
+
+Pre-release, published 2026-10-21. It becomes **2.0.2** once the author
+confirms it on real hardware.
+
+### The firmware moved to its own folder
+
+```
+INFO firmware file ...\A2DPWB\rtl8852bu_fw.bin moved to ...\A2DPWB\firmware\rtl8852bu_fw.bin
+INFO firmware file ...\A2DPWB\rtl8852bu_config.bin moved to ...\A2DPWB\firmware\rtl8852bu_config.bin
+INFO bt_host::app: Realtek adapter PID 0xB85B, firmware folder ...\A2DPWB\firmware
+```
+
+The loose files in the config folder are moved **once**, on the first run of
+the new build. The UI gained **Settings > Open Firmware Folder**. Downloads are
+cached in `%TEMP%\A2DPWB_cache`. The toolkit now resolves the firmware folder
+automatically (the `firmware` subfolder when it exists, the config folder
+otherwise), and `-FirmwareDir` overrides it.
+
+### The ROM state is reported instead of a misleading "download ran"
+
+This was reported on
+[issue #81](https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues/81)
+and landed as **PR #113**. On beta.4 a cold module with the firmware files
+missing printed
+
+```
+INFO Realtek firmware download ran (ROM LMP subversion 0x8852); not verified
+```
+
+although no download was possible. On beta.5 the same situation prints the
+file-based warning and a truthful state:
+
+```
+WARN firmware file missing: ...\A2DPWB\firmware\rtl8852bu_fw.bin
+WARN firmware file missing: ...\A2DPWB\firmware\rtl8852bu_config.bin
+INFO Realtek firmware already running from an earlier session (LMP subversion 0xFD78), download skipped
+```
+
+`download ran` is gone, and the Adapter screen and the Home bar now carry the
+ROM state (`Realtek firmware NOT loaded (... rtl8852bu_fw.bin missing in ...)`).
+
+### Other changes worth knowing
+
+* The version read right after a download is retried for up to 2 s.
+* `rtl8852bu_config.bin` is unchanged: **linux-firmware has no config file for
+  the RTL8852BU**, so the 0-byte file the app writes is correct and BTstack
+  falls back to the efuse settings. The toolkit documents this.
+* Fixes for the core crash on a stream right after another (#130), the black
+  window with RivaTuner (#126), "headphones turned off" (#117, #123, #128), the
+  repeated "put the device into pairing mode" (#120), occasional crackles
+  (#122), AAC as LATM (#112) and the profile card offering "Connect" again
+  after an error (#118).
+* A diagnostic bundle can be written from **Diagnostics > Report a problem >
+  Save**; the core also writes one itself when it stops.
+
+### How to look at the firmware folder
+
+```
+Settings > Open Firmware Folder
+```
+
+or, from a shell:
+
+```powershell
+Get-ChildItem "$env:APPDATA\A2DPWB\firmware"
+```

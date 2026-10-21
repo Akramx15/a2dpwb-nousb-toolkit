@@ -21,8 +21,14 @@ The script is idempotent: valid files already in place are kept, invalid ones
 are replaced. Every written file's SHA-256 is printed.
 
 .PARAMETER ConfigDir
-Destination folder. Default: $env:A2DPWB_CONFIG_DIR, else %APPDATA%\A2DPWB
+A2DPWB config folder. Default: $env:A2DPWB_CONFIG_DIR, else %APPDATA%\A2DPWB
 (the folder A2DPWB reads).
+
+.PARAMETER FirmwareDir
+Folder that holds the firmware files. Default: auto-detected - the
+"firmware" subfolder of the config folder when it exists (A2DPWB
+2.0.2-beta.5 and newer moved the files there), else the config folder
+itself (2.0.2-beta.4 and older kept them in the config folder).
 
 .PARAMETER FilePrefix
 File name stem, default rtl8852bu (do not change unless you use a custom
@@ -56,12 +62,15 @@ powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1
 powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1 -LegacyAliases
 
 .NOTES
-Targets A2DP-Windows-Bridge 2.0.2-beta.4 and newer.
+Targets A2DP-Windows-Bridge 2.0.2-beta.4 and newer (2.0.2-beta.5 moved the
+firmware files to the "firmware" subfolder of the config folder; this script
+follows that automatically).
 Exit codes: 0 success, 1 failure, 2 bad arguments.
 #>
 [CmdletBinding()]
 param(
     [string]$ConfigDir,
+    [string]$FirmwareDir,
     [string]$FilePrefix = 'rtl8852bu',
     [string[]]$BaseUrls = @(
         'https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/',
@@ -84,6 +93,14 @@ function Resolve-ConfigDir {
     if ($env:A2DPWB_CONFIG_DIR) { return $env:A2DPWB_CONFIG_DIR }
     if ($env:APPDATA) { return (Join-Path $env:APPDATA 'A2DPWB') }
     throw 'No config folder: pass -ConfigDir or set A2DPWB_CONFIG_DIR / APPDATA.'
+}
+
+function Resolve-FirmwareDir {
+    if ($FirmwareDir) { return $FirmwareDir }
+    $config = Resolve-ConfigDir
+    $modern = Join-Path $config 'firmware'
+    if (Test-Path -LiteralPath $modern -PathType Container) { return $modern }
+    return $config
 }
 
 function Get-FirmwareState {
@@ -196,12 +213,19 @@ function Install-Alias {
 try {
     $dir = Resolve-ConfigDir
     Write-Host "A2DPWB config folder: $dir"
+    $fwDir = Resolve-FirmwareDir
+    if ($fwDir -ne $dir) {
+        Write-Host "Firmware folder      : $fwDir (the 'firmware' subfolder - 2.0.2-beta.5 and newer)"
+    }
+    else {
+        Write-Host 'Firmware folder      : the config folder itself (no "firmware" subfolder found - 2.0.2-beta.4 or older)'
+    }
     if ($DryRun) { Write-Host 'Dry run: nothing will be downloaded or written.' }
 
-    $fwBin = Join-Path $dir ("{0}_fw.bin" -f $FilePrefix)
-    $cfgBin = Join-Path $dir ("{0}_config.bin" -f $FilePrefix)
-    $fwAlias = Join-Path $dir ("{0}_fw" -f $FilePrefix)
-    $cfgAlias = Join-Path $dir ("{0}_config" -f $FilePrefix)
+    $fwBin = Join-Path $fwDir ("{0}_fw.bin" -f $FilePrefix)
+    $cfgBin = Join-Path $fwDir ("{0}_config.bin" -f $FilePrefix)
+    $fwAlias = Join-Path $fwDir ("{0}_fw" -f $FilePrefix)
+    $cfgAlias = Join-Path $fwDir ("{0}_config" -f $FilePrefix)
 
     Write-Host 'Firmware:'
     $fwState = Get-FirmwareState -Path $fwBin -Kind fw

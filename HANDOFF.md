@@ -13,8 +13,11 @@ time — not because the radio itself is special.
 990 kbps, 0 dropped packets, heard by the user with no dropouts.
 
 **Current machine state (2026-10-21).** The installed app is
-**2.0.2-beta.4** (official NSIS installer, `currentUser`, installed over
-2.0.1), and the chip now resolves as `chip: RTL8852BU (0xBDA:4853 -> 0xB85B)`.
+**2.0.2-beta.5** (official NSIS installer, `currentUser`, installed over
+2.0.2-beta.4), and the chip now resolves as `chip: RTL8852BU (0xBDA:4853 ->
+0xB85B)`. The Realtek firmware files live in **`%APPDATA%\A2DPWB\firmware`**
+since beta.5 moved them there (the UI has *Settings > Open Firmware Folder*);
+the toolkit scripts detect that folder automatically.
 **VB-CABLE is installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`).
 The Windows default output is currently **`Speakers (Realtek(R) Audio)`** — the
 headphones-only route is a recipe, not the default state. Both directions:

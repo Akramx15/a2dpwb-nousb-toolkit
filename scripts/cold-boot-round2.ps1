@@ -87,6 +87,7 @@
 param(
     [string]$Core = '',
     [string]$ConfigDir = (Join-Path $env:APPDATA 'A2DPWB'),
+    [string]$FirmwareDir = '',
     [string]$BackupDir = (Join-Path $env:APPDATA 'A2DPWB-coldboot-backup'),
     [string]$Headset = '',
     [int]$RebootDelaySeconds = 30,
@@ -105,6 +106,14 @@ $script:StartupDir = [Environment]::GetFolderPath('Startup')
 $script:StartupEntry = Join-Path $script:StartupDir 'a2dpwb-cold-boot-round2.cmd'
 $script:TestScript = Join-Path $PSScriptRoot 'cold-boot-test.ps1'
 $script:RemovedManifest = Join-Path $BackupDir 'removed-names.txt'
+
+# 2.0.2-beta.5 moved the firmware files into the "firmware" subfolder of the
+# config folder; 2.0.2-beta.4 and older kept them in the config folder itself.
+if (-not $FirmwareDir) {
+    $modernFwDir = Join-Path $ConfigDir 'firmware'
+    if (Test-Path -LiteralPath $modernFwDir -PathType Container) { $FirmwareDir = $modernFwDir }
+    else { $FirmwareDir = $ConfigDir }
+}
 
 function Write-Section { param([string]$Text) Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Write-Step { param([string]$Text) Write-Host "   $Text" }
@@ -148,7 +157,7 @@ function Copy-FirmwareToBackup {
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     $copied = @()
     foreach ($n in $script:FirmwareNames) {
-        $src = Join-Path $ConfigDir $n
+        $src = Join-Path $FirmwareDir $n
         if (Test-Path -LiteralPath $src) {
             Copy-Item -LiteralPath $src -Destination (Join-Path $BackupDir $n) -Force
             $copied += $n
@@ -163,7 +172,7 @@ function Restore-FirmwareFromBackup {
     foreach ($n in $Names) {
         $src = Join-Path $BackupDir $n
         if (-not (Test-Path -LiteralPath $src)) { continue }
-        $dst = Join-Path $ConfigDir $n
+        $dst = Join-Path $FirmwareDir $n
         $done = $false
         for ($i = 0; $i -lt 10 -and -not $done; $i++) {
             try {
@@ -224,7 +233,7 @@ if ($Abort) {
     }
     $restored = Restore-FirmwareFromBackup -Names $restoreNames
     Write-Step ("firmware restored from ${BackupDir}: " + $(if ($restored.Count -gt 0) { $restored -join ', ' } else { 'nothing (backup missing or empty)' }))
-    $missing = @($script:BinaryNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ConfigDir $_)) })
+    $missing = @($script:BinaryNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $FirmwareDir $_)) })
     if ($missing.Count -eq 0) {
         if (Test-Path -LiteralPath $script:RemovedManifest) { Remove-Item -LiteralPath $script:RemovedManifest -Force }
         Write-Host 'RESULT: reboot cancelled and both .bin firmware files are present (2.0.2+).' -ForegroundColor Green
@@ -275,8 +284,8 @@ if (-not $Headset) { Fail-Precondition "no headset address found; pass -Headset 
 if ($Headset -notmatch '^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$') { Fail-Precondition "'$Headset' is not a Bluetooth address." }
 Write-Step "headset  : $Headset"
 
-$present = @(Get-FirmwareFiles -Dir $ConfigDir)
-$presentBins = @(Get-PresentBins -Dir $ConfigDir)
+$present = @(Get-FirmwareFiles -Dir $FirmwareDir)
+$presentBins = @(Get-PresentBins -Dir $FirmwareDir)
 if ($presentBins.Count -ne 2) {
     Fail-Precondition ("round 2 needs both .bin firmware files, found {0}. Run -Abort first to restore them." -f $presentBins.Count)
 }
@@ -299,7 +308,7 @@ Write-Step "startup  : $script:StartupEntry"
 $startupContent = @(
     '@echo off',
     'rem Self-deleting A2DP-Windows-Bridge cold-boot round-2 probe.',
-    ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Missing -Core "{1}" -Headset "{2}" -OutputFile "{3}" > "{3}" 2>&1' -f $script:TestScript, $Core, $Headset, $OutputFile),
+    ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Missing -Core "{1}" -Headset "{2}" -FirmwareDir "{3}" -OutputFile "{4}" > "{4}" 2>&1' -f $script:TestScript, $Core, $Headset, $FirmwareDir, $OutputFile),
     'del /f /q "%~f0"'
 ) -join "`r`n"
 
@@ -308,7 +317,7 @@ if (-not $Execute) {
     Write-Step 'The script would:'
     Write-Step "  1. copy the firmware files present (the two .bin at minimum) to $BackupDir"
     Write-Step "  2. write the self-deleting Startup entry $script:StartupEntry"
-    Write-Step '  3. remove exactly the files it backed up from the config folder'
+    Write-Step "  3. remove exactly the files it backed up from the firmware folder ($FirmwareDir)"
     Write-Step "  4. run: shutdown.exe /r /t $RebootDelaySeconds /c `"A2DP Windows Bridge cold-boot round 2`""
     Write-Host ''
     Write-Step 'Startup entry content:'
@@ -348,14 +357,14 @@ if ($installed -notmatch [regex]::Escape('-Mode Missing')) {
 
 $removed = @()
 foreach ($n in $copied) {
-    $p = Join-Path $ConfigDir $n
+    $p = Join-Path $FirmwareDir $n
     if (Test-Path -LiteralPath $p) {
         Remove-Item -LiteralPath $p -Force
         $removed += $n
     }
 }
-Write-Step ("removed from the config folder: " + ($removed -join ', '))
-if (@(Get-FirmwareFiles -Dir $ConfigDir).Count -ne 0) {
+Write-Step ("removed from the firmware folder: " + ($removed -join ', '))
+if (@(Get-FirmwareFiles -Dir $FirmwareDir).Count -ne 0) {
     Restore-FirmwareFromBackup -Names $removed | Out-Null
     Remove-StartupEntry | Out-Null
     Write-Host 'ERROR: not all firmware files could be removed; the files were restored and the Startup entry removed.' -ForegroundColor Red

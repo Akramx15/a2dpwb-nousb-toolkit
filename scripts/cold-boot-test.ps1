@@ -126,6 +126,7 @@ param(
     [switch]$RequireBeta,
     [int]$ScanSeconds = 6,
     [string]$ConfigDir = (Join-Path $env:APPDATA 'A2DPWB'),
+    [string]$FirmwareDir = '',
     [string]$BackupDir = (Join-Path $env:APPDATA 'A2DPWB-coldboot-backup'),
     [string]$OutputFile = (Join-Path $env:USERPROFILE 'Documents\opencode\a2db\work\cold-boot-test.txt'),
     [string]$Headset = '',
@@ -144,6 +145,14 @@ $script:BinaryNames = @('rtl8852bu_fw.bin', 'rtl8852bu_config.bin')
 $script:Results = New-Object System.Collections.Generic.List[object]
 $script:ProbeDir = $null
 $script:PhaseLogs = @()
+
+# 2.0.2-beta.5 moved the firmware files into the "firmware" subfolder of the
+# config folder; 2.0.2-beta.4 and older kept them in the config folder itself.
+if (-not $FirmwareDir) {
+    $modernFwDir = Join-Path $ConfigDir 'firmware'
+    if (Test-Path -LiteralPath $modernFwDir -PathType Container) { $FirmwareDir = $modernFwDir }
+    else { $FirmwareDir = $ConfigDir }
+}
 
 function Write-Section { param([string]$Text) Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Write-Step { param([string]$Text) Write-Host "   $Text" }
@@ -248,7 +257,7 @@ function Restore-FirmwareFiles {
     foreach ($n in $Names) {
         $src = Join-Path $FromDir $n
         if (-not (Test-Path -LiteralPath $src)) { continue }
-        $dst = Join-Path $ConfigDir $n
+        $dst = Join-Path $FirmwareDir $n
         $done = $false
         for ($i = 0; $i -lt 10 -and -not $done; $i++) {
             try {
@@ -341,11 +350,12 @@ else {
 }
 
 Write-Step "config   : $ConfigDir"
+Write-Step "firmware : $FirmwareDir ($(if ($FirmwareDir -eq $ConfigDir) { 'the config folder itself - 2.0.2-beta.4 or older' } else { 'the firmware subfolder - 2.0.2-beta.5 or newer' }))"
 Write-Step "scan     : ${ScanSeconds}s"
 Write-Step "output   : $OutputFile"
 Write-Step "raw logs : $OutputFile.phase1.log, $OutputFile.phase2.log, $OutputFile.phase3.log"
 
-$present = @(Get-FirmwareFiles -Dir $ConfigDir)
+$present = @(Get-FirmwareFiles -Dir $FirmwareDir)
 $presentBins = @($present | Where-Object { $script:BinaryNames -contains (Split-Path -Leaf $_) })
 $presentCopies = @($present | Where-Object { $script:AliasNames -contains (Split-Path -Leaf $_) })
 Write-Step ("firmware : {0} of 2 .bin file(s), {1} extension-less copy/copies present" -f $presentBins.Count, $presentCopies.Count)
@@ -453,7 +463,7 @@ try {
         if ($present.Count -gt 0) {
             New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
             foreach ($n in $script:FirmwareNames) {
-                $p = Join-Path $ConfigDir $n
+                $p = Join-Path $FirmwareDir $n
                 if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $BackupDir $n) -Force }
             }
             $backupBins = @(Get-FirmwareFiles -Dir $BackupDir | Where-Object { $script:BinaryNames -contains (Split-Path -Leaf $_) })
@@ -462,7 +472,7 @@ try {
                 exit 2
             }
             foreach ($n in $script:FirmwareNames) {
-                $p = Join-Path $ConfigDir $n
+                $p = Join-Path $FirmwareDir $n
                 if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
             }
             Write-Step 'forced Missing: the present files were moved to the backup (the module may be warm)'
@@ -660,7 +670,7 @@ try {
             $moved = @()
             try {
                 foreach ($n in $script:FirmwareNames) {
-                    $p = Join-Path $ConfigDir $n
+                    $p = Join-Path $FirmwareDir $n
                     if (Test-Path -LiteralPath $p) {
                         Move-Item -LiteralPath $p -Destination (Join-Path $script:ProbeDir $n) -Force
                         $moved += $n
@@ -707,13 +717,13 @@ try {
         if ($isBeta) {
             # 2.0.2+ uses the .bin files; identical extension-less copies are obsolete.
             foreach ($n in $script:AliasNames) {
-                $p = Join-Path $ConfigDir $n
+                $p = Join-Path $FirmwareDir $n
                 if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
             }
             $log3 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
             Save-PhaseLog -Phase 3 -Text $log3
-            $aliasFw = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_fw')
-            $aliasCfg = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_config')
+            $aliasFw = Test-Path -LiteralPath (Join-Path $FirmwareDir 'rtl8852bu_fw')
+            $aliasCfg = Test-Path -LiteralPath (Join-Path $FirmwareDir 'rtl8852bu_config')
             $copiesAbsent = (-not $aliasFw) -and (-not $aliasCfg)
             $opened3 = $log3 -match 'USB: opened'
             $expectation = 'the .bin files are used directly, no extension-less copies exist, and the adapter opens'
@@ -787,11 +797,11 @@ finally {
 
 # --- post-run verification -----------------------------------------------------
 Write-Section 'Firmware restore check'
-$final = @(Get-FirmwareFiles -Dir $ConfigDir)
+$final = @(Get-FirmwareFiles -Dir $FirmwareDir)
 $requiredNames = if ($isBeta) { $script:BinaryNames } else { $script:FirmwareNames }
-$missingFiles = @($requiredNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ConfigDir $_)) })
+$missingFiles = @($requiredNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $FirmwareDir $_)) })
 $restoreExpectation = if ($isBeta) {
-    'both .bin firmware files exist in the config folder (2.0.2+; copies optional/obsolete)'
+    'both .bin firmware files exist in the firmware folder (2.0.2+; copies optional/obsolete)'
 }
 else {
     'all four legacy firmware files exist in the config folder (2.0.1)'
@@ -799,7 +809,7 @@ else {
 if ($missingFiles.Count -eq 0) {
     $evidence = (($final | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')
     if ($isBeta) {
-        $leftCopies = @($script:AliasNames | Where-Object { Test-Path -LiteralPath (Join-Path $ConfigDir $_) })
+        $leftCopies = @($script:AliasNames | Where-Object { Test-Path -LiteralPath (Join-Path $FirmwareDir $_) })
         if ($leftCopies.Count -eq 0) { $evidence += '; no extension-less copies (expected)' }
         else { $evidence += "; obsolete copies remain: $($leftCopies -join ', ')" }
     }

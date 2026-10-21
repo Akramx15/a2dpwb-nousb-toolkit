@@ -1,6 +1,6 @@
 # A2DP-Windows-Bridge without a USB dongle (internal RTL8852BU)
 
-Operating manual for running **A2DP-Windows-Bridge 2.0.2-beta.4** on this PC
+Operating manual for running **A2DP-Windows-Bridge 2.0.2-beta.5** on this PC
 using only its **internal** Bluetooth radio
 (`USB\VID_0BDA&PID_4853\00E04C0000XX`, Realtek **RTL8852BU**). No external USB
 dongle is bought.
@@ -10,7 +10,7 @@ Toolkit layout (this repo):
 | Path | What it is |
 |:--|:--|
 | `scripts/stream.ps1` | **Daily-use launcher**: streams to the headphones with the installed core |
-| `scripts/fetch-realtek-fw.ps1` | Downloads + validates the Realtek firmware into the A2DPWB config folder; 2.0.2+ writes only the `.bin` files (`-LegacyAliases` for 2.0.1) |
+| `scripts/fetch-realtek-fw.ps1` | Downloads + validates the Realtek firmware into the A2DPWB firmware folder (2.0.2-beta.5+: `%APPDATA%\A2DPWB\firmware`, auto-detected); 2.0.2+ writes only the `.bin` files (`-LegacyAliases` for 2.0.1) |
 | `scripts/usb-driver.ps1` | Wraps `a2dpwb-driver.exe` (assign / restore) and `pnputil` (restart) |
 | `scripts/run-emulator.ps1` | Zero-hardware end-to-end run against the Bumble virtual sink |
 | `scripts/doctor.ps1` | Read-only diagnosis + verdict; reports the inspected app version and the firmware layout it implies |
@@ -22,7 +22,7 @@ Toolkit layout (this repo):
 | `vendor-patches/` | The patched copies the diffs were generated from |
 | `docs/HEADPHONES-ONLY.md` | **Headphones-only routing through VB-CABLE**: the full recipe, the verified evidence and the one-command revert |
 | `docs/UNPATCHED-MODULE.md` | **An unpatched module opens the adapter but cannot stream**: reproduction and what it means for the user |
-| `docs/UPSTREAM-2.0.2.md` | **2.0.1 -> 2.0.2-beta.4 changes**: no error-50 path, family-wide PID resolution, named/self-fetched firmware, obsolete extension-less copies |
+| `docs/UPSTREAM-2.0.2.md` | **2.0.1 -> 2.0.2-beta.5 changes**: no error-50 path, family-wide PID resolution, named/self-fetched firmware, obsolete extension-less copies, the firmware folder, the ROM state |
 | `docs/` | Build-from-source guide, decisions (ADRs), the root-cause account and the drafted upstream issue |
 
 `../upstream/` is the read-only reference clone of v2.0.1. **Never edit or
@@ -61,7 +61,7 @@ the current, verified result — not a plan.
 
 | Check | Evidence |
 |:--|:--|
-| Build | **2.0.2-beta.4**, official NSIS installer, `currentUser` mode (no administrator rights) |
+| Build | **2.0.2-beta.5**, official NSIS installer, `currentUser` mode (no administrator rights) |
 | Device | the headset, `<HEADSET_MAC>`, classic A2DP (LE Audio switched **off** on the headset) |
 | Chip | `chip: RTL8852BU (0BDA)` (2.0.1 said `chip: unknown (0x4853)`) |
 | Codec discovery | `remote supports LDAC (SEID 3, [2D, 01, 00, 00, AA, 00, 3C, 07])` → `codec selected: LDAC` |
@@ -70,12 +70,13 @@ the current, verified result — not a plan.
 | 40 s test tone | `Sent 7507 media packets (5052211 bytes), 0 dropped` |
 | 25 s system loopback | `Sent 4701 media packets (3163773 bytes), 0 dropped` |
 | Cold module, only `.bin` files (2.0.2-beta.4) | `Realtek firmware download ran (ROM LMP subversion 0x8852)`; `Sent 3765 media packets ... 0 dropped`; no extension-less copies created (`docs/UPSTREAM-2.0.2.md`) |
+| Firmware files missing, warm module (2.0.2-beta.5) | `WARN firmware file missing: ...\firmware\rtl8852bu_fw.bin`; `Realtek firmware already running from an earlier session (LMP subversion 0xFD78), download skipped` - the misleading "download ran" is gone |
 | User confirmation | A song played on the PC came out of the headphones **and** the PC speakers, excellent quality, no dropouts |
 | Headphones-only routing | `CABLE Input` as default output + virtual capture: `Sent 3789 media packets (2549997 bytes), 0 dropped before the radio`, speakers silent — `docs/HEADPHONES-ONLY.md` |
 
-The toolkit currently targets **2.0.2-beta.4**. The table records the beta.1
-streaming runs plus the beta.4 cold-module run; beta.4 keeps the streaming
-result and removes the manual re-enumeration and file-copy steps (see
+The toolkit currently targets **2.0.2-beta.5**. The table records the beta.1
+streaming runs plus the beta.4 cold-module run; beta.5 keeps the streaming
+result, removes the manual re-enumeration and file-copy steps (see
 `docs/UPSTREAM-2.0.2.md`).
 
 ### Daily use: one command
@@ -256,7 +257,7 @@ Setup state; the verified streaming result is in the top section.
 | Item | Value |
 |:--|:--|
 | Adapter instance | `USB\VID_0BDA&PID_4853\00E04C0000XX` |
-| Installed app | **2.0.2-beta.4** (installed over 2.0.1 with the official NSIS installer, `currentUser`, no admin) |
+| Installed app | **2.0.2-beta.5** (installed over 2.0.2-beta.4 with the official NSIS installer, `currentUser`, no admin) |
 | Current driver | `winusb.inf` / service `WINUSB` (WinUSB Device) |
 | Previous driver (recorded) | `oem197.inf`, Realtek, service `BTHUSB`, `reboot_required: true` |
 | WinUSB open result | **opens** (the former `failed to initialize WinUSB (error 50)` was the binding not being live; it cleared once the device was re-enumerated) |
@@ -327,7 +328,14 @@ powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1 -DryRun   
 powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1           # download + validate
 ```
 
-Creates, in `%APPDATA%\A2DPWB` (override with `-ConfigDir`):
+Creates, in the firmware folder (override with `-FirmwareDir`):
+
+* `%APPDATA%\A2DPWB\firmware` on **2.0.2-beta.5 and newer** (the app moved the
+  files there on its first run and the UI has *Settings > Open Firmware
+  Folder*); the script detects the folder and prints which one it uses.
+* `%APPDATA%\A2DPWB` itself on **2.0.2-beta.4 and older**.
+
+In that folder:
 
 * `rtl8852bu_fw.bin` and `rtl8852bu_config.bin` (validated magic).
 * On 2.0.1 only, `-LegacyAliases` additionally creates the extension-less

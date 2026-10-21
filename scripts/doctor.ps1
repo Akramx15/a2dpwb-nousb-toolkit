@@ -47,6 +47,11 @@ The verdict has four states:
 .PARAMETER ConfigDir
 A2DPWB config folder. Default: $env:A2DPWB_CONFIG_DIR, else %APPDATA%\A2DPWB.
 
+.PARAMETER FirmwareDir
+Folder that holds the firmware files. Default: auto-detected - the
+"firmware" subfolder of the config folder when it exists (2.0.2-beta.5 and
+newer), else the config folder itself (2.0.2-beta.4 and older).
+
 .PARAMETER VidPid
 USB VID:PID of the internal adapter, default 0BDA:4853 (Realtek RTL8852BU).
 
@@ -88,6 +93,7 @@ STALE, 2 the doctor itself failed.
 [CmdletBinding()]
 param(
     [string]$ConfigDir,
+    [string]$FirmwareDir,
     [string]$VidPid = '0BDA:4853',
     [string]$AppDir,
     [string]$UpstreamDir,
@@ -112,6 +118,15 @@ function Resolve-ConfigDir {
     if ($env:A2DPWB_CONFIG_DIR) { return $env:A2DPWB_CONFIG_DIR }
     if ($env:APPDATA) { return (Join-Path $env:APPDATA 'A2DPWB') }
     return $null
+}
+
+function Resolve-FirmwareDir {
+    param([string]$Config)
+    if ($FirmwareDir) { return $FirmwareDir }
+    if (-not $Config) { return $null }
+    $modern = Join-Path $Config 'firmware'
+    if (Test-Path -LiteralPath $modern -PathType Container) { return $modern }
+    return $Config
 }
 
 function Resolve-AppDir {
@@ -338,11 +353,18 @@ try {
     }
     else {
         Write-Host "Config folder: $config"
+        $fwDir = Resolve-FirmwareDir -Config $config
+        if ($fwDir -eq $config) {
+            Write-Host 'Firmware folder: the config folder itself (no "firmware" subfolder - 2.0.2-beta.4 or older)' -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host "Firmware folder: $fwDir (the 'firmware' subfolder - 2.0.2-beta.5 and newer)" -ForegroundColor DarkGray
+        }
         Write-Host "Firmware stem: $stem"
-        $fwBin = Join-Path $config ("{0}_fw.bin" -f $stem)
-        $cfgBin = Join-Path $config ("{0}_config.bin" -f $stem)
-        $fwAlias = Join-Path $config ("{0}_fw" -f $stem)
-        $cfgAlias = Join-Path $config ("{0}_config" -f $stem)
+        $fwBin = Join-Path $fwDir ("{0}_fw.bin" -f $stem)
+        $cfgBin = Join-Path $fwDir ("{0}_config.bin" -f $stem)
+        $fwAlias = Join-Path $fwDir ("{0}_fw" -f $stem)
+        $cfgAlias = Join-Path $fwDir ("{0}_config" -f $stem)
         $fwOk = $true
         if ($modernApp) {
             Write-Host 'Layout: 2.0.2+ uses the .bin files; extension-less copies are obsolete (PR #97).' -ForegroundColor DarkGray
@@ -541,6 +563,10 @@ try {
         $lastAuthError = Get-LastLogMatch -Lines $lines -Pattern 'signaling connection failed|stream establishment failed|authentication failed'
         $lastMedia = Get-LastLogMatch -Lines $lines -Pattern 'Sent \d+ media packets'
         $chipLine = Get-LastLogMatch -Lines $lines -Pattern 'chip:'
+        # Newest firmware-state line of any kind: the ROM state ("NOT loaded"),
+        # the warm state ("already running"), an upload ("download ran") or the
+        # missing-file warning (2.0.2+).
+        $lastFwState = Get-LastLogMatch -Lines $lines -Pattern 'Realtek firmware (NOT loaded|already running|download ran)|firmware file missing'
 
         $lastOpenTs = if ($lastOpen) { Get-LogTimestamp -Line $lastOpen } else { $null }
         $lastFailureTs = if ($lastFailure) { Get-LogTimestamp -Line $lastFailure } else { $null }
@@ -584,6 +610,10 @@ try {
         Write-Host ("  Last pairing/auth error : {0}" -f $(if ($lastAuthError) { $lastAuthError } else { '(none in this log)' }))
         Write-Host ("  Last media packets      : {0}" -f $(if ($lastMedia) { $lastMedia } else { '(none in this log)' }))
         Write-Host ("  Last audio state        : {0}" -f $(if ($lastStreaming) { $lastStreaming } else { '(none in this log)' }))
+        Write-Host ("  Last firmware state     : {0}" -f $(if ($lastFwState) { $lastFwState } else { '(none in this log)' }))
+        if ($lastFwState -and $lastFwState -match 'NOT loaded') {
+            Write-Host '  note: the controller is running its ROM code; the firmware is missing, so the adapter cannot connect or stream.' -ForegroundColor Yellow
+        }
         if ($lastFailure) {
             $when = if ($lastFailureTs) { $lastFailureTs.ToString('yyyy-MM-dd HH:mm:ss') } else { 'timestamp unparseable' }
             Write-Host ("  Last HCI open failure   : {0} ({1})" -f $lastFailure, $when) -ForegroundColor $(if ($adapterHealthy) { 'DarkGray' } else { 'Red' })
