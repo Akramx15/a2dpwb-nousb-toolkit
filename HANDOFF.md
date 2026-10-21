@@ -39,12 +39,13 @@ has no sound at all** — that is the known footgun, documented at the top of
 
 ### Upstream thread state (issue #81, recorded 2026-10-20 under beta.1)
 
-`https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues/81` — open, 5
-comments (1 from the maintainer, 4 from this account). Since then
-**2.0.2-beta.4** shipped with #88 (self restart after assign), #92 (app-side
-firmware download), #94 (ROM detection) and #97 (extension-less copies
-obsolete); the beta.1 account below is kept as history, and the current
-behaviour is in `docs/UPSTREAM-2.0.2.md`.
+`https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues/81` — open, 10
+comments (2 from the maintainer, 8 from this account). Since then
+**2.0.2-beta.5** shipped with #113 (the ROM state, credited to this issue),
+#117/#123/#128 (headphones turned off), #120 (pairing), #122 (crackles),
+#112 (AAC), #126 (black window) and #130 (core crash); the earlier beta.4
+changes (#88, #92, #94, #97) are still in. The current behaviour is in
+`docs/UPSTREAM-2.0.2.md`, the beta.5 test is in `docs/BETA5-VERIFICATION.md`.
 
 | What | State |
 |---|---|
@@ -71,11 +72,12 @@ the core's named pipe.
 
 | Fact | Evidence |
 |---|---|
-| Installed build | `2.0.2-beta.4` (NSIS, `currentUser`); `chip: RTL8852BU (0BDA) (auto)` |
+| Installed build | `2.0.2-beta.5` (NSIS, `currentUser`); `chip: RTL8852BU (0BDA) (auto)` |
 | Adapter is USB, bound to WinUSB | `DEVPKEY_Device_Service = WINUSB`, `Status Started`, `ProblemCode 0` |
 | WinUSB opens the adapter | `INFO USB: opened 0BDA:4853 ... (event 0x81, ACL 0x82/0x02)` |
 | Controller is alive | `INFO controller: company 0x005D (Realtek), HCI version 11, LMP subversion 0xFD78` |
-| Realtek firmware loads | `INFO Realtek firmware download ran (ROM LMP subversion 0x8852)` / later `Firmware already exists` |
+| The ROM state is reported | `WARN Realtek firmware NOT loaded (LMP subversion 0x8852 is the ROM code; ...)` (beta.5, PR #113) |
+| The ROM -> patched transition is logged | `INFO Realtek firmware loaded (LMP subversion 0x8852 -> 0xFD78)` (beta.5) |
 | HCI comes up | `INFO HCI ready (took 102 ms)` |
 | RF link to the real headset works | `INFO HCI ACL connection established to <HEADSET_MAC>` |
 | Headphone address | `<HEADSET_MAC>` (the headset, from the old Windows pairing; `scripts\stream.ps1` auto-discovers it, or list it with `a2dpwb-core.exe --cli -l` / Windows Settings > Bluetooth) |
