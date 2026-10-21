@@ -238,7 +238,9 @@ this automatically when you stop.
 Known limitation of v2.0.1: the app's own chip table
 (`app/src/crates/bt-host/src/chips.rs`, `REALTEK_CHIPS`) lacks `0x4853`, so
 the UI/log says `chip: unknown (0x4853)`. The `patches/` in this repo fix
-that name so the UI advises the correct firmware files. BTstack itself does
+that name so the UI advises the correct firmware files; upstream merged the
+same idea as **PR #82**, so on 2.0.2-beta.2 and newer the patch is superseded
+and the name comes from BTstack's firmware table instead. BTstack itself does
 not need the app table: it already loads `rtl8852bu_fw`. The installed
 **2.0.2-beta.5** resolves it on this PC:
 `chip: RTL8852BU (0BDA:4853 -> 0xB85B) (auto)`.

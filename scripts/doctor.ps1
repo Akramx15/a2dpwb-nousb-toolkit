@@ -28,7 +28,7 @@ Changes nothing in the A2DPWB configuration. Reports:
     successful marker ("HCI ready" or "USB: opened"). A historical failure in
     a log that accumulates the whole day does not count as the current state.
   - the resolved chip name (BTstack's table maps the PID 0x4853 to RTL8852BU)
-    and why the stock UI still prints "chip: unknown"
+    and how upstream resolved it (PR #82)
   - the tools\emu Python virtual environment state
 
 The verdict has four states:
@@ -200,6 +200,39 @@ function Get-LastLogMatch {
     }
     if ($result) { return $result }
     return $null
+}
+
+function Read-LogFile {
+    <#
+      The core keeps the daily log open for writing, and it does not open it
+      with a share mode that lets a plain reader in. [System.IO.File]::ReadAllLines
+      therefore fails with "being used by another process" whenever the app is
+      running - which is the normal case, not an edge case. Read it with
+      FileShare.ReadWrite instead, and fall back to a copy if even that is
+      refused.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+        try {
+            $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $true)
+            try { $text = $sr.ReadToEnd() } finally { $sr.Dispose() }
+        }
+        finally { if ($fs) { $fs.Dispose() } }
+        if ($text.Length -gt 0) { return ($text -split "`r?`n") }
+        return @()
+    }
+    catch {
+        # last resort: copy through a temp file (works when the writer allows
+        # other readers but not a shared open)
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("a2dpwb-log-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".log")
+        try {
+            [System.IO.File]::Copy($Path, $tmp, $true)
+            return [System.IO.File]::ReadAllLines($tmp)
+        }
+        catch { return @() }
+        finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 function Get-ChipName {
@@ -551,7 +584,7 @@ try {
     }
     if ($logFile) {
         Write-Host ("Log: {0} (modified {1})" -f $logFile.FullName, $logFile.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))
-        $lines = [System.IO.File]::ReadAllLines($logFile.FullName)
+        $lines = Read-LogFile -Path $logFile.FullName
         $logAnalysed = $true
         Write-Host ("Lines: {0}" -f $lines.Count)
 
@@ -634,8 +667,9 @@ try {
             $resolved = Get-ChipName -ProductId ("0x{0}" -f $pidValue)
             if ($resolved) {
                 Write-Host ("  resolved chip           : {0} (Realtek USB PID 0x{1})" -f $resolved, $pidValue) -ForegroundColor Green
-                Write-Host '  note: the stock UI prints "chip: unknown" because upstream has no' -ForegroundColor DarkGray
-                Write-Host '        table entry for PID 0x4853 (see patches\0001-bt-host-name-rtl8852bu-pid-0x4853.patch).' -ForegroundColor DarkGray
+                Write-Host '  note: upstream resolved this from PR #82 (2.0.2-beta.2 and newer) by' -ForegroundColor DarkGray
+                Write-Host '        inferring the family from the firmware table, so the "chip: unknown"' -ForegroundColor DarkGray
+                Write-Host '        line this patch fixed is gone; patches\0001 is superseded.' -ForegroundColor DarkGray
             }
         }
     }
