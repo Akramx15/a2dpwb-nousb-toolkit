@@ -18,6 +18,7 @@ Toolkit layout (this repo):
 | `scripts/cold-boot-round2.ps1` | Prepares the next reboot for the missing-firmware case, backs up/removes exactly the files it found, restores them; `-WhatIf` (default), `-Execute`, `-Abort` |
 | `scripts/set-default-audio.ps1` | Lists the render endpoints and sets the Windows default output (IPolicyConfig); `-List`, `-Device`, `-Restore`, `-WhatIf` |
 | `scripts/copy-diagnostics.ps1` | Reads the app's **Copy Diagnostics** text over the core's IPC pipe, without the GUI; `-Masked` (default), `-Full`, `-Output` |
+| `scripts/scrub-diagnostics.ps1` | Removes the device identifiers from a diagnostic bundle before publishing it: Bluetooth addresses, the adapter's USB serial, other USB instance ids; refuses to write if anything survives |
 | `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app — **superseded by upstream PR #82** (2.0.2-beta.1); kept for 2.0.1 source builds only |
 | `vendor-patches/` | The patched copies the diffs were generated from |
 | `docs/HEADPHONES-ONLY.md` | **Headphones-only routing through VB-CABLE**: the full recipe, the verified evidence and the one-command revert |
