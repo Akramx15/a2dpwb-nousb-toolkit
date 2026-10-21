@@ -19,7 +19,7 @@
     The script adapts to the state it finds and always restores the firmware:
 
       Mode Missing (files absent at start, normally run right after a reboot)
-        phase 1  Expect the 2.0.2+ beta to name the missing .bin files
+        phase 1  Expect the app to name the missing .bin files
                  ("firmware file missing" warnings); that is the requirement.
                  If the adapter still opens, report it as a NOTE: a ROM-mode
                  module serves HCI. An open failure is recorded as an
@@ -27,9 +27,11 @@
                  never as a requirement. -StreamInPhase1 (on by default) then
                  records, informationally, whether an unpatched ROM-mode
                  module can stream A2DP.
-        phase 2  Restore the .bin files: expect the beta to recreate the
-                 extension-less aliases, download the firmware (ROM LMP
-                 subversion) and open the adapter.
+        phase 2  Restore the .bin files: on 2.0.2+ expect them to be used
+                 directly, the extension-less copies to stay absent and the
+                 firmware to be downloaded (ROM LMP subversion); on 2.0.1 the
+                 extension-less copies are the legacy requirement. The adapter
+                 must open either way.
         phase 3  Stream to the headset (0 dropped packets expected).
 
       Mode Present (cold + files present at start)
@@ -37,23 +39,30 @@
                  (ROM LMP subversion + "Realtek firmware download ran"). A
                  warm module is reported as PASS-with-note, because this run
                  cannot prove the cold case.
-        phase 2  Informational probe: remove all four files and expect the
-                 beta to name them. A module that still has the firmware in RAM
+        phase 2  Informational probe: remove all present firmware files and expect the
+                 app to name them. A module that still has the firmware in RAM
                  may still open; that is EXPECTED and reported as
                  PASS-with-note, not as a failure.
-        phase 3  .bin files back, aliases recreated by the app, then stream.
+        phase 3  2.0.2+: the .bin files stay, the app does not need
+                 extension-less copies (identical ones are removed on a scan),
+                 uses the .bin files and opens the adapter.
+                 2.0.1: the extension-less copies are the legacy requirement.
+                Then stream.
 
-    Mode Auto (default) picks Missing when all four files are absent and
-    Present when all four are present. A partial set is a precondition error.
+    Mode Auto (default) picks Missing when no .bin file is present and Present
+    when both .bin files are present. A partial .bin set is a precondition
+    error. The extension-less copies are optional on 2.0.2+ (not needed; a scan
+    removes identical ones) and required on 2.0.1.
 
-    Beta-only checks (the "firmware file missing:" warning and the recreated
-    aliases) are marked "SKIPPED (needs 2.0.2+)" on 2.0.1 instead of failing.
-    Use -RequireBeta to make a non-beta binary a precondition error.
+    Beta-only checks (the "firmware file missing:" warning) are marked
+    "SKIPPED (needs 2.0.2+)" on 2.0.1 instead of failing. Use -RequireBeta to
+    make a non-beta binary a precondition error. The script prints which copy
+    expectation applies before it runs.
 
 .PARAMETER Core
-    Path to a2dpwb-core.exe. Default: the portable beta
-    ..\beta-2.0.2-beta.1\A2DPWB-2.0.2-beta.1\a2dpwb-core.exe next to this
-    repository when it exists, otherwise the installed stable release.
+    Path to a2dpwb-core.exe. Default: the installed release under
+    %LOCALAPPDATA%\A2DP Windows Bridge (the portable beta next to this
+    repository is used when present).
 
 .PARAMETER Mode
     Auto (default), Present or Missing. See the description.
@@ -70,6 +79,13 @@
 .PARAMETER BackupDir
     Safe copy of the firmware files, used by cold-boot-round2.ps1 and as the
     restore source in Mode Missing. Default: %APPDATA%\A2DPWB-coldboot-backup.
+
+.PARAMETER OutputFile
+    Base path for the raw per-phase app logs. The raw output of each phase is
+    written as <output>.phase1.log, <output>.phase2.log and
+    <output>.phase3.log; the summary itself goes to the console (the Startup
+    entry written by cold-boot-round2.ps1 redirects it to <output>). Default:
+    %USERPROFILE%\Documents\opencode\a2db\work\cold-boot-test.txt.
 
 .PARAMETER Headset
     Bluetooth address to stream to. Optional: with no address, the last phase
@@ -97,6 +113,8 @@
     powershell -ExecutionPolicy Bypass -File scripts\cold-boot-test.ps1 -RequireBeta
 
 .NOTES
+    Targets A2DP-Windows-Bridge 2.0.2-beta.4 and newer; 2.0.1 runs with the
+    legacy copy expectation.
     Exit codes: 0 all expectations met (notes and version skips allowed),
     1 at least one expectation failed, 2 precondition error.
 #>
@@ -109,6 +127,7 @@ param(
     [int]$ScanSeconds = 6,
     [string]$ConfigDir = (Join-Path $env:APPDATA 'A2DPWB'),
     [string]$BackupDir = (Join-Path $env:APPDATA 'A2DPWB-coldboot-backup'),
+    [string]$OutputFile = (Join-Path $env:USERPROFILE 'Documents\opencode\a2db\work\cold-boot-test.txt'),
     [string]$Headset = '',
     [string]$Codec = 'ldac',
     [int]$StreamSeconds = 20,
@@ -124,6 +143,7 @@ $script:AliasNames = @('rtl8852bu_fw', 'rtl8852bu_config')
 $script:BinaryNames = @('rtl8852bu_fw.bin', 'rtl8852bu_config.bin')
 $script:Results = New-Object System.Collections.Generic.List[object]
 $script:ProbeDir = $null
+$script:PhaseLogs = @()
 
 function Write-Section { param([string]$Text) Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Write-Step { param([string]$Text) Write-Host "   $Text" }
@@ -158,6 +178,24 @@ function Add-Result {
 function Remove-Ansi {
     param([string]$Text)
     return [regex]::Replace($Text, '\x1B\[[0-9;]*[A-Za-z]', '')
+}
+
+function Save-PhaseLog {
+    param([int]$Phase, [string]$Text, [switch]$Append)
+    if (-not $OutputFile) { return }
+    $dir = Split-Path -Parent $OutputFile
+    if ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    $path = "$OutputFile.phase$Phase.log"
+    if ($Append -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+        [System.IO.File]::AppendAllText($path, $Text, [System.Text.Encoding]::UTF8)
+    }
+    else {
+        [System.IO.File]::WriteAllText($path, $Text, [System.Text.Encoding]::UTF8)
+    }
+    if (-not ($script:PhaseLogs -contains $path)) { $script:PhaseLogs += $path }
+    Write-Step "raw phase $Phase log: $path"
 }
 
 function Invoke-Core {
@@ -275,6 +313,13 @@ Write-Step "core     : $Core"
 Write-Step "source   : $coreSource"
 Write-Step "version  : $(if ($version) { $version } else { 'unknown' })"
 Write-Step "beta     : $(if ($isBeta) { 'yes (2.0.2+ / beta)' } else { 'no' })"
+if ($isBeta) {
+    $copyExpectation = '2.0.2+: the app uses the .bin files and removes identical extension-less copies on a scan (PR #97); copies absent is correct'
+}
+else {
+    $copyExpectation = '2.0.1: the extension-less copies rtl8852bu_fw / rtl8852bu_config are required (BTstack opens those names); supply them with fetch-realtek-fw.ps1 -LegacyAliases'
+}
+Write-Step "copies   : $copyExpectation"
 
 if ($RequireBeta -and -not $isBeta) {
     Write-Host "ERROR: -RequireBeta was given but '$Core' reports version '$version' (not 2.0.2+)." -ForegroundColor Red
@@ -297,24 +342,28 @@ else {
 
 Write-Step "config   : $ConfigDir"
 Write-Step "scan     : ${ScanSeconds}s"
+Write-Step "output   : $OutputFile"
+Write-Step "raw logs : $OutputFile.phase1.log, $OutputFile.phase2.log, $OutputFile.phase3.log"
 
 $present = @(Get-FirmwareFiles -Dir $ConfigDir)
-Write-Step ("firmware : {0} of 4 file(s) present in the config folder" -f $present.Count)
+$presentBins = @($present | Where-Object { $script:BinaryNames -contains (Split-Path -Leaf $_) })
+$presentCopies = @($present | Where-Object { $script:AliasNames -contains (Split-Path -Leaf $_) })
+Write-Step ("firmware : {0} of 2 .bin file(s), {1} extension-less copy/copies present" -f $presentBins.Count, $presentCopies.Count)
 
 $effectiveMode = $Mode
 if ($Mode -eq 'Auto') {
-    if ($present.Count -eq 0) { $effectiveMode = 'Missing' }
-    elseif ($present.Count -eq 4) { $effectiveMode = 'Present' }
+    if ($presentBins.Count -eq 0) { $effectiveMode = 'Missing' }
+    elseif ($presentBins.Count -eq 2) { $effectiveMode = 'Present' }
     else {
-        Write-Host "ERROR: only $($present.Count) of the four firmware files are present; the state is inconsistent." -ForegroundColor Red
+        Write-Host "ERROR: only $($presentBins.Count) of the two .bin firmware files are present; the state is inconsistent." -ForegroundColor Red
         Write-Host "Present: $((@($present | ForEach-Object { Split-Path -Leaf $_ })) -join ', ')"
         Write-Host 'Restore them (cold-boot-round2.ps1 -Abort) or pass -Mode explicitly.'
         exit 2
     }
 }
-elseif ($Mode -eq 'Present' -and $present.Count -ne 4) {
-    Write-Host "ERROR: -Mode Present requires all four firmware files, found $($present.Count)." -ForegroundColor Red
-    Write-Host 'Use -Mode Missing (right after a reboot) or restore the files first.'
+elseif ($Mode -eq 'Present' -and $presentBins.Count -ne 2) {
+    Write-Host "ERROR: -Mode Present requires both .bin firmware files, found $($presentBins.Count)." -ForegroundColor Red
+    Write-Host 'Use -Mode Missing (right after a reboot) or restore the .bin files first.'
     exit 2
 }
 Write-Step "mode     : $effectiveMode (from $(if ($Mode -eq 'Auto') { 'Auto' } else { "-Mode $Mode" }))"
@@ -347,33 +396,51 @@ else {
 # --- dry run -------------------------------------------------------------------
 if ($DryRun) {
     Write-Section 'Dry run - nothing was changed'
+    Write-Step "copy expectation: $copyExpectation"
     if ($effectiveMode -eq 'Missing') {
-        Write-Step 'Mode Missing: the files are (or will be made) absent before the reboot.'
-        Write-Step "  1. expect the beta to name rtl8852bu_fw.bin / rtl8852bu_config.bin (scan ${ScanSeconds}s)"
+        Write-Step 'Mode Missing: the .bin files are (or will be made) absent before the reboot.'
+        Write-Step "  1. expect the app to name rtl8852bu_fw.bin / rtl8852bu_config.bin (scan ${ScanSeconds}s)"
         Write-Step '     an open on a ROM-mode module is a note, not a failure; an open failure is an additional finding'
         if ($StreamInPhase1 -and $Headset) {
             $p1Seconds = [Math]::Max($StreamSeconds, 10)
             Write-Step "  1b. informational: stream to '$Headset' for ${p1Seconds}s on the unpatched module"
         }
-        Write-Step "  2. restore the .bin files from $BackupDir, expect aliases + firmware download + open (scan ${ScanSeconds}s)"
-        Write-Step "  3. stream to '$Headset' for ${StreamSeconds}s (0 dropped packets expected)"
+        if ($isBeta) {
+            Write-Step "  2. restore the .bin files from $BackupDir, expect the .bin files used directly, no copies and a firmware download (scan ${ScanSeconds}s)"
+        }
+        else {
+            Write-Step "  2. restore the .bin files from $BackupDir, expect the legacy extension-less copies and open (scan ${ScanSeconds}s)"
+        }
+        if ($Headset) {
+            Write-Step "  3. stream to '$Headset' for ${StreamSeconds}s (0 dropped packets expected)"
+        }
+        else {
+            Write-Step '  3. stream: skipped (no headset found)'
+        }
         if (-not (Test-Path -LiteralPath $BackupDir)) {
             Write-Step "NOTE: $BackupDir does not exist yet; a real Missing run would exit 2."
         }
     }
     else {
-        Write-Step 'Mode Present: the module is expected cold and the files present.'
+        Write-Step 'Mode Present: the module is expected cold and the .bin files present.'
         Write-Step "  1. scan: expect ROM LMP subversion + 'Realtek firmware download ran' ($ScanSeconds s)"
-        Write-Step "  2. informational: remove all four, expect the beta to name them ($ScanSeconds s); a warm open is a note"
+        Write-Step "  2. informational: remove all present firmware files, expect the app to name them ($ScanSeconds s); a warm open is a note"
         if ($isBeta) {
-            Write-Step "  3. restore, delete the aliases, expect the app to recreate them + open ($ScanSeconds s)"
+            Write-Step "  3. drop any extension-less copies, expect the .bin files used directly and the copies to stay absent + open ($ScanSeconds s)"
         }
         else {
-            Write-Step '  3. aliases phase would be SKIPPED (needs 2.0.2+)'
+            Write-Step '  3. expect the legacy extension-less copies to remain present + open (2.0.1)'
         }
-        Write-Step "  4. stream to '$Headset' for ${StreamSeconds}s (0 dropped packets expected)"
+        if ($Headset) {
+            Write-Step "  4. stream to '$Headset' for ${StreamSeconds}s (0 dropped packets expected)"
+        }
+        else {
+            Write-Step '  4. stream: skipped (no headset found)'
+        }
     }
-    Write-Step "finally  : restore all four files to $ConfigDir"
+    Write-Step "raw logs : <output>.phase1.log, <output>.phase2.log, <output>.phase3.log under $(Split-Path -Parent $OutputFile)"
+    $finalNames = if ($isBeta) { 'the two .bin files' } else { 'the four legacy files' }
+    Write-Step "finally  : restore $finalNames to $ConfigDir"
     Write-Step 'exit code: 0 (dry run)'
     exit 0
 }
@@ -389,22 +456,24 @@ try {
                 $p = Join-Path $ConfigDir $n
                 if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $BackupDir $n) -Force }
             }
-            if (@(Get-FirmwareFiles -Dir $BackupDir).Count -ne 4) {
-                Write-Host "ERROR: cannot build a complete backup in $BackupDir; nothing was removed." -ForegroundColor Red
+            $backupBins = @(Get-FirmwareFiles -Dir $BackupDir | Where-Object { $script:BinaryNames -contains (Split-Path -Leaf $_) })
+            if ($backupBins.Count -ne 2) {
+                Write-Host "ERROR: cannot build a backup with both .bin files in $BackupDir; nothing was removed." -ForegroundColor Red
                 exit 2
             }
             foreach ($n in $script:FirmwareNames) {
                 $p = Join-Path $ConfigDir $n
                 if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
             }
-            Write-Step 'forced Missing: the four files were moved to the backup (the module may be warm)'
+            Write-Step 'forced Missing: the present files were moved to the backup (the module may be warm)'
         }
         else {
             Write-Step "files already absent; restore source: $BackupDir"
         }
 
-        if (@(Get-FirmwareFiles -Dir $BackupDir).Count -ne 4) {
-            Write-Host "ERROR: $BackupDir does not contain all four firmware files, so they could not be restored." -ForegroundColor Red
+        $restoreBins = @(Get-FirmwareFiles -Dir $BackupDir | Where-Object { $script:BinaryNames -contains (Split-Path -Leaf $_) })
+        if ($restoreBins.Count -ne 2) {
+            Write-Host "ERROR: $BackupDir does not contain both .bin firmware files, so they could not be restored." -ForegroundColor Red
             Write-Host 'Run cold-boot-round2.ps1 -Abort on the machine that made the backup, or restore them manually.'
             exit 2
         }
@@ -418,6 +487,7 @@ try {
         }
         else {
             $log1 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
+            Save-PhaseLog -Phase 1 -Text $log1
             $warnings = @(Get-WarningLines -Log $log1)
             $warned = $warnings.Count -gt 0
             $namedFw = $warned -and ($log1 -match 'rtl8852bu_fw(\.bin)?')
@@ -455,6 +525,7 @@ try {
                     $p1Seconds = [Math]::Max($StreamSeconds, 10)
                     Write-Section "Phase 1 (informational) - stream on the unpatched module for ${p1Seconds}s"
                     $logP1 = Invoke-Core -Arguments @('--cli', '-d', $Headset, '-c', $Codec, '--duration', "$p1Seconds")
+                    Save-PhaseLog -Phase 1 -Text "`r`n===== informational stream probe =====`r`n$logP1" -Append
                     $streamingP1 = $logP1 -match 'state Streaming: Connected'
                     $sentP1 = [regex]::Match($logP1, 'Sent (\d+) media packets \((\d+) bytes\), (\d+) dropped')
                     if ($streamingP1 -and $sentP1.Success) {
@@ -475,36 +546,58 @@ try {
 
         # --- phase 2: restore .bin, recover -----------------------------------
         Write-Section 'Phase 2 - .bin files restored, expect recovery'
+        Write-Step "copy expectation: $copyExpectation"
         $restoredBins = Restore-FirmwareFiles -FromDir $BackupDir -Names $script:BinaryNames
         Write-Step ("restored: " + $(if ($restoredBins.Count -gt 0) { $restoredBins -join ', ' } else { 'none' }))
-        if ($restoredBins.Count -ne 2) {
-            Add-Result -Phase 'phase 2' -Expectation 'the app recreates the aliases, downloads the firmware and opens the adapter' `
-                -Status 'FAIL' -Evidence "could not restore both .bin files from $BackupDir"
-        }
-        elseif (-not $isBeta) {
-            Add-Result -Phase 'phase 2' -Expectation 'the app recreates the aliases, downloads the firmware and opens the adapter' `
-                -Status 'SKIP' -Evidence 'SKIPPED (needs 2.0.2+): 2.0.1 does not create the aliases.'
+        $phase2Expectation = if ($isBeta) {
+            'the .bin files are used directly, no extension-less copies are created, the firmware is downloaded and the adapter opens'
         }
         else {
+            'the legacy extension-less copies are present and the adapter opens (2.0.1)'
+        }
+        if ($restoredBins.Count -ne 2) {
+            Add-Result -Phase 'phase 2' -Expectation $phase2Expectation `
+                -Status 'FAIL' -Evidence "could not restore both .bin files from $BackupDir"
+        }
+        elseif ($isBeta) {
             $log2 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
+            Save-PhaseLog -Phase 2 -Text $log2
             $rom = [regex]::Match($log2, 'ROM LMP subversion ([0-9A-Fa-fx]+)')
             $download = $log2 -match 'Realtek firmware download ran'
             $aliasFw = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_fw')
             $aliasCfg = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_config')
+            $copiesAbsent = (-not $aliasFw) -and (-not $aliasCfg)
             $opened2 = $log2 -match 'USB: opened'
             $romText = if ($rom.Success) { $rom.Groups[1].Value } else { 'n/a' }
-            $evidence = "ROM LMP subversion: $romText; download ran: $download; alias fw/config: $aliasFw/$aliasCfg; adapter opened: $opened2"
-            if ($aliasFw -and $aliasCfg -and $opened2 -and $download) {
-                Add-Result -Phase 'phase 2' -Expectation 'the app recreates the aliases, downloads the firmware and opens the adapter' `
-                    -Status 'PASS' -Evidence $evidence
+            $evidence = "ROM LMP subversion: $romText; download ran: $download; copies absent: $copiesAbsent (fw=$aliasFw, config=$aliasCfg); adapter opened: $opened2"
+            if ($copiesAbsent -and $opened2 -and $download) {
+                Add-Result -Phase 'phase 2' -Expectation $phase2Expectation -Status 'PASS' -Evidence $evidence
             }
-            elseif ($aliasFw -and $aliasCfg -and $opened2 -and $missingWarm) {
-                Add-Result -Phase 'phase 2' -Expectation 'the app recreates the aliases, downloads the firmware and opens the adapter' `
-                    -Status 'NOTE' -Evidence ("warm module: aliases and open OK, download skipped as expected; this does not exercise the cold recovery. $evidence")
+            elseif ($copiesAbsent -and $opened2 -and $missingWarm) {
+                Add-Result -Phase 'phase 2' -Expectation $phase2Expectation `
+                    -Status 'NOTE' -Evidence ("warm module: .bin files used and open OK, download skipped as expected; this does not exercise the cold recovery. $evidence")
             }
             else {
-                Add-Result -Phase 'phase 2' -Expectation 'the app recreates the aliases, downloads the firmware and opens the adapter' `
-                    -Status 'FAIL' -Evidence $evidence
+                $why = if (-not $copiesAbsent) { 'the app created extension-less copies although 2.0.2+ must not' } elseif (-not $opened2) { 'the adapter did not open' } else { 'no firmware download was observed' }
+                Add-Result -Phase 'phase 2' -Expectation $phase2Expectation -Status 'FAIL' -Evidence ("$why. $evidence")
+            }
+        }
+        else {
+            $log2 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
+            Save-PhaseLog -Phase 2 -Text $log2
+            $aliasFw = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_fw')
+            $aliasCfg = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_config')
+            $opened2 = $log2 -match 'USB: opened'
+            $evidence = "legacy copies present: fw=$aliasFw, config=$aliasCfg; adapter opened: $opened2"
+            if (-not ($aliasFw -and $aliasCfg)) {
+                Add-Result -Phase 'phase 2' -Expectation $phase2Expectation -Status 'SKIP' `
+                    -Evidence ("2.0.1 legacy copies are absent; supply them with fetch-realtek-fw.ps1 -LegacyAliases. $evidence")
+            }
+            elseif ($opened2) {
+                Add-Result -Phase 'phase 2' -Expectation $phase2Expectation -Status 'PASS' -Evidence $evidence
+            }
+            else {
+                Add-Result -Phase 'phase 2' -Expectation $phase2Expectation -Status 'FAIL' -Evidence $evidence
             }
         }
 
@@ -516,6 +609,7 @@ try {
         }
         else {
             $log3 = Invoke-Core -Arguments @('--cli', '-d', $Headset, '-c', $Codec, '--duration', "$StreamSeconds")
+            Save-PhaseLog -Phase 3 -Text $log3
             $streaming = $log3 -match 'state Streaming: Connected'
             $sent = [regex]::Match($log3, 'Sent (\d+) media packets \((\d+) bytes\), (\d+) dropped')
             $errors = @(Get-DecisiveLines -Log $log3)
@@ -535,6 +629,7 @@ try {
         # --- Present: phase 1 cold verification -------------------------------
         Write-Section 'Phase 1 - module cold and firmware present'
         $log1 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
+        Save-PhaseLog -Phase 1 -Text $log1
         $rom = [regex]::Match($log1, 'ROM LMP subversion ([0-9A-Fa-fx]+)')
         $download = $log1 -match 'Realtek firmware download ran'
         $warm = Test-WarmLog -Log $log1
@@ -574,6 +669,7 @@ try {
                 Write-Step ("moved away: " + ($moved -join ', '))
 
                 $log2 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
+                Save-PhaseLog -Phase 2 -Text $log2
                 $warnings = @(Get-WarningLines -Log $log2)
                 $warned = $warnings.Count -gt 0
                 $namedFw = $warned -and ($log2 -match 'rtl8852bu_fw(\.bin)?')
@@ -588,7 +684,7 @@ try {
                 }
                 elseif ($opened2) {
                     Add-Result -Phase 'phase 2' -Expectation 'the app names the missing firmware files' -Status 'NOTE' `
-                        -Evidence ("the adapter still opened although all four files were missing - EXPECTED, not a failure (a ROM-mode module serves HCI; a module with the firmware in RAM also keeps it). The beta named the files. $evidence")
+                        -Evidence ("the adapter still opened although the firmware files were missing - EXPECTED, not a failure (a ROM-mode module serves HCI; a module with the firmware in RAM also keeps it). The app named the files. $evidence")
                 }
                 elseif ($failed2) {
                     Add-Result -Phase 'phase 2' -Expectation 'the app names the missing firmware files' -Status 'PASS' `
@@ -605,25 +701,48 @@ try {
             }
         }
 
-        # --- Present: phase 3 aliases + stream --------------------------------
-        Write-Section 'Phase 3 - .bin files in place, aliases recreated, then stream'
-        if (-not $isBeta) {
-            Add-Result -Phase 'phase 3' -Expectation 'the app recreates the extension-less aliases and opens the adapter' -Status 'SKIP' `
-                -Evidence 'SKIPPED (needs 2.0.2+): 2.0.1 does not create the aliases.'
-        }
-        else {
-            # only the .bin files stay; the extension-less copies are made by the app
+        # --- Present: phase 3 adaptive copy check + stream --------------------
+        Write-Section 'Phase 3 - .bin files in place, copy expectation, then stream'
+        Write-Step "copy expectation: $copyExpectation"
+        if ($isBeta) {
+            # 2.0.2+ uses the .bin files; identical extension-less copies are obsolete.
             foreach ($n in $script:AliasNames) {
                 $p = Join-Path $ConfigDir $n
                 if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
             }
             $log3 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
+            Save-PhaseLog -Phase 3 -Text $log3
+            $aliasFw = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_fw')
+            $aliasCfg = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_config')
+            $copiesAbsent = (-not $aliasFw) -and (-not $aliasCfg)
+            $opened3 = $log3 -match 'USB: opened'
+            $expectation = 'the .bin files are used directly, no extension-less copies exist, and the adapter opens'
+            if ($copiesAbsent -and $opened3) {
+                Add-Result -Phase 'phase 3' -Expectation $expectation -Status 'PASS' `
+                    -Evidence "copies absent: $copiesAbsent (fw=$aliasFw, config=$aliasCfg); adapter opened: $opened3"
+            }
+            else {
+                $why = if (-not $copiesAbsent) { 'the app created extension-less copies although 2.0.2+ must not (PR #97)' } else { 'the adapter did not open' }
+                Add-Result -Phase 'phase 3' -Expectation $expectation -Status 'FAIL' `
+                    -Evidence "$why. copies absent: $copiesAbsent (fw=$aliasFw, config=$aliasCfg); adapter opened: $opened3"
+            }
+        }
+        else {
+            $log3 = Invoke-Core -Arguments @('--cli', '--scan', "$ScanSeconds")
+            Save-PhaseLog -Phase 3 -Text $log3
             $aliasFw = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_fw')
             $aliasCfg = Test-Path -LiteralPath (Join-Path $ConfigDir 'rtl8852bu_config')
             $opened3 = $log3 -match 'USB: opened'
-            Add-Result -Phase 'phase 3' -Expectation 'the app recreates the extension-less aliases and opens the adapter' `
-                -Status $(if ($aliasFw -and $aliasCfg -and $opened3) { 'PASS' } else { 'FAIL' }) `
-                -Evidence "alias rtl8852bu_fw: $aliasFw; alias rtl8852bu_config: $aliasCfg; adapter opened: $opened3"
+            $expectation = 'the legacy extension-less copies are present and the adapter opens (2.0.1)'
+            if (-not ($aliasFw -and $aliasCfg)) {
+                Add-Result -Phase 'phase 3' -Expectation $expectation -Status 'SKIP' `
+                    -Evidence ("legacy copies are absent; supply them with fetch-realtek-fw.ps1 -LegacyAliases. fw=$aliasFw, config=$aliasCfg; adapter opened: $opened3")
+            }
+            else {
+                Add-Result -Phase 'phase 3' -Expectation $expectation `
+                    -Status $(if ($opened3) { 'PASS' } else { 'FAIL' }) `
+                    -Evidence "legacy copies present: fw=$aliasFw, config=$aliasCfg; adapter opened: $opened3"
+            }
         }
 
         Write-Section 'Phase 3b - stream'
@@ -633,6 +752,7 @@ try {
         }
         else {
             $log4 = Invoke-Core -Arguments @('--cli', '-d', $Headset, '-c', $Codec, '--duration', "$StreamSeconds")
+            Save-PhaseLog -Phase 3 -Text "`r`n===== stream phase =====`r`n$log4" -Append
             $streaming = $log4 -match 'state Streaming: Connected'
             $sent = [regex]::Match($log4, 'Sent (\d+) media packets \((\d+) bytes\), (\d+) dropped')
             $errors = @(Get-DecisiveLines -Log $log4)
@@ -651,10 +771,14 @@ try {
 }
 finally {
     $source = if ($effectiveMode -eq 'Missing') { $BackupDir } else { $script:ProbeDir }
+    $restoreNames = if ($isBeta) { $script:BinaryNames } else { $script:FirmwareNames }
     if ($source -and (Test-Path -LiteralPath $source)) {
-        $restored = Restore-FirmwareFiles -FromDir $source -Names $script:FirmwareNames
+        $restored = Restore-FirmwareFiles -FromDir $source -Names $restoreNames
         Write-Section 'Restore (finally)'
         Write-Step ("restored from ${source}: " + $(if ($restored.Count -gt 0) { $restored -join ', ' } else { 'none' }))
+        if ($isBeta) {
+            Write-Step '2.0.2+: only the .bin files are restored; extension-less copies are obsolete and were not put back'
+        }
         if ($effectiveMode -eq 'Present') {
             Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -664,18 +788,36 @@ finally {
 # --- post-run verification -----------------------------------------------------
 Write-Section 'Firmware restore check'
 $final = @(Get-FirmwareFiles -Dir $ConfigDir)
-$missingFiles = @($script:FirmwareNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ConfigDir $_)) })
-if ($missingFiles.Count -eq 0) {
-    Add-Result -Phase 'restore' -Expectation 'all four firmware files exist in the config folder' -Status 'PASS' `
-        -Evidence (($final | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')
+$requiredNames = if ($isBeta) { $script:BinaryNames } else { $script:FirmwareNames }
+$missingFiles = @($requiredNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ConfigDir $_)) })
+$restoreExpectation = if ($isBeta) {
+    'both .bin firmware files exist in the config folder (2.0.2+; copies optional/obsolete)'
 }
 else {
-    Add-Result -Phase 'restore' -Expectation 'all four firmware files exist in the config folder' -Status 'FAIL' `
+    'all four legacy firmware files exist in the config folder (2.0.1)'
+}
+if ($missingFiles.Count -eq 0) {
+    $evidence = (($final | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')
+    if ($isBeta) {
+        $leftCopies = @($script:AliasNames | Where-Object { Test-Path -LiteralPath (Join-Path $ConfigDir $_) })
+        if ($leftCopies.Count -eq 0) { $evidence += '; no extension-less copies (expected)' }
+        else { $evidence += "; obsolete copies remain: $($leftCopies -join ', ')" }
+    }
+    Add-Result -Phase 'restore' -Expectation $restoreExpectation -Status 'PASS' -Evidence $evidence
+}
+else {
+    Add-Result -Phase 'restore' -Expectation $restoreExpectation -Status 'FAIL' `
         -Evidence ("missing: " + ($missingFiles -join ', '))
 }
 
 # --- summary -------------------------------------------------------------------
 Write-Section 'Summary'
+if ($script:PhaseLogs.Count -gt 0) {
+    Write-Step ("raw per-phase app output: " + ($script:PhaseLogs -join ', '))
+}
+else {
+    Write-Step "raw per-phase app output was not written (no core invocation reached a phase log; base: $OutputFile)"
+}
 $script:Results | Format-Table -AutoSize Phase, Status, Expectation | Out-String | Write-Host
 $failed = @($script:Results | Where-Object { $_.Status -eq 'FAIL' })
 $skipped = @($script:Results | Where-Object { $_.Status -eq 'SKIP' })

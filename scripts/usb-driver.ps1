@@ -198,7 +198,7 @@ try {
             }
             $code = Invoke-DriverHelper -Arguments @('assign', $id)
             if ($code -eq 0) {
-                Write-Host 'Adapter is on WinUSB. If the helper reported "reboot_required": true, reboot before streaming (WinUSB error 50 until then).'
+                Write-Host 'Adapter is on WinUSB. 2.0.2+ restarts the device itself after the assign; on 2.0.1, if the helper reported "reboot_required": true, reboot before streaming (WinUSB error 50 until then).'
             }
             exit $code
         }

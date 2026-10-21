@@ -9,8 +9,11 @@ Changes nothing in the A2DPWB configuration. Reports:
 
   - the internal Bluetooth adapter's instance ID and current driver
     (WinUSB vs BTHUSB), from a2dpwb-driver.exe state and Get-PnpDevice
-  - whether rtl8852bu_fw.bin / rtl8852bu_config.bin and their extension-less
-    aliases exist and pass the magic checks A2DPWB enforces
+  - the inspected app version (e.g. 2.0.2-beta.4) and the firmware layout it
+    implies: 2.0.2+ needs the .bin files and treats the extension-less copies
+    as obsolete; 2.0.1 needs both forms
+  - whether rtl8852bu_fw.bin / rtl8852bu_config.bin (2.0.2+) and, on 2.0.1,
+    the extension-less aliases exist and pass the magic checks A2DPWB enforces
   - whether a2dpwb-core.exe / a2dpwb-driver.exe / a2dpwb.exe exist
   - a LIVE PROBE (default): it runs the real installed core
     (a2dpwb-core.exe --cli --scan <seconds>) so the verdict reflects the
@@ -191,6 +194,15 @@ function Get-ChipName {
     return $null
 }
 
+function Test-ModernApp {
+    param([string]$Version)
+    if (-not $Version) { return $true }
+    $m = [regex]::Match($Version, '(\d+)\.(\d+)\.(\d+)')
+    if (-not $m.Success) { return $false }
+    $v = [version]('{0}.{1}.{2}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value)
+    return ($v -ge [version]'2.0.2')
+}
+
 function Get-ConfigSnapshot {
     param([string]$Root)
     $snap = @{}
@@ -235,6 +247,22 @@ try {
 
     Write-Host 'A2DPWB no-USB doctor (read-only)'
     Write-Host ("Computer: {0}   Date: {1}" -f $env:COMPUTERNAME, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+
+    # --- App version -------------------------------------------------------
+    $appVersion = $null
+    if ($app) {
+        foreach ($name in @('a2dpwb.exe', 'a2dpwb-core.exe')) {
+            $candidate = Join-Path $app $name
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $vi = (Get-Item -LiteralPath $candidate).VersionInfo
+                $appVersion = [string]$vi.FileVersion
+                if (-not $appVersion) { $appVersion = [string]$vi.ProductVersion }
+                break
+            }
+        }
+    }
+    $modernApp = Test-ModernApp -Version $appVersion
+    Write-Host ("App version: {0} (inspected{1})" -f $(if ($appVersion) { $appVersion } else { 'unknown' }), $(if ($appVersion) { "; firmware layout: $(if ($modernApp) { '.bin files, copies obsolete' } else { 'legacy .bin + extension-less copies' })" } else { '' }))
 
     # --- Adapter ---
     Write-Section "Adapter ($VidPid)"
@@ -283,6 +311,9 @@ try {
     }
     if ($record) {
         Write-Host ("Driver record            : {0} (reboot_required={1})" -f $record.instance_id, $record.reboot_required)
+        if ($record.reboot_required -and $modernApp) {
+            Write-Host '  note: 2.0.2+ restarts the device itself after the WinUSB assign; reboot_required=true points at an older helper record.' -ForegroundColor DarkGray
+        }
     }
 
     # --- Firmware ---
@@ -313,11 +344,15 @@ try {
         $fwAlias = Join-Path $config ("{0}_fw" -f $stem)
         $cfgAlias = Join-Path $config ("{0}_config" -f $stem)
         $fwOk = $true
+        if ($modernApp) {
+            Write-Host 'Layout: 2.0.2+ uses the .bin files; extension-less copies are obsolete (PR #97).' -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host 'Layout: 2.0.1 and older open the extension-less copies; all four files are required.' -ForegroundColor DarkGray
+        }
         foreach ($pair in @(
                 @{ Path = $fwBin; Kind = 'fw'; Label = 'firmware (.bin)' },
-                @{ Path = $fwAlias; Kind = 'fw'; Label = 'firmware (BTstack name)' },
-                @{ Path = $cfgBin; Kind = 'cfg'; Label = 'config (.bin)' },
-                @{ Path = $cfgAlias; Kind = 'cfg'; Label = 'config (BTstack name)' })) {
+                @{ Path = $cfgBin; Kind = 'cfg'; Label = 'config (.bin)' })) {
             $st = Test-Firmware -Path $pair.Path -Kind $pair.Kind
             if ($st.Valid) {
                 Write-Host ("  OK      {0}: {1} ({2} bytes)" -f $pair.Label, $pair.Path, $st.Length) -ForegroundColor Green
@@ -327,8 +362,29 @@ try {
                 $fwOk = $false
             }
         }
+        foreach ($pair in @(
+                @{ Path = $fwAlias; Kind = 'fw'; Label = 'firmware (BTstack name)' },
+                @{ Path = $cfgAlias; Kind = 'cfg'; Label = 'config (BTstack name)' })) {
+            $st = Test-Firmware -Path $pair.Path -Kind $pair.Kind
+            if ($modernApp) {
+                $state = if (-not $st.Exists) { 'absent (not needed)' } elseif ($st.Valid) { 'present (obsolete; 2.0.2+ removes identical copies on a scan)' } else { "present but invalid ($($st.Reason)); obsolete on 2.0.2+" }
+                Write-Host ("  OPTIONAL {0}: {1} - {2}" -f $pair.Label, $pair.Path, $state) -ForegroundColor DarkGray
+            }
+            elseif ($st.Valid) {
+                Write-Host ("  OK      {0}: {1} ({2} bytes)" -f $pair.Label, $pair.Path, $st.Length) -ForegroundColor Green
+            }
+            else {
+                Write-Host ("  MISSING {0}: {1} ({2})" -f $pair.Label, $pair.Path, $(if ($st.Exists) { $st.Reason } else { 'not found' })) -ForegroundColor Yellow
+                $fwOk = $false
+            }
+        }
         if (-not $fwOk) {
-            $fwFixAction = 'Run scripts\fetch-realtek-fw.ps1 to download and validate the Realtek firmware.'
+            $fwFixAction = if ($modernApp) {
+                'Run scripts\fetch-realtek-fw.ps1 to download and validate the two .bin files (2.0.2+ opens them directly).'
+            }
+            else {
+                'Run scripts\fetch-realtek-fw.ps1 -LegacyAliases to download the firmware and create the extension-less copies 2.0.1 opens.'
+            }
         }
     }
 
@@ -337,7 +393,7 @@ try {
     if (-not $app -or -not (Test-Path -LiteralPath $app -PathType Container)) {
         Write-Host "App folder not found: $app" -ForegroundColor Red
         $blockers.Add('A2DPWB is not installed')
-        if (-not $nextAction) { $nextAction = 'Install A2DP-Windows-Bridge v2.0.1 (release installer or portable zip).' }
+        if (-not $nextAction) { $nextAction = 'Install A2DP-Windows-Bridge 2.0.2-beta.4 (release installer or portable zip).' }
     }
     else {
         Write-Host "App folder: $app"
@@ -628,10 +684,10 @@ try {
     else {
         if ($driverKind -and $driverKind -ne 'winusb') {
             $blockers.Add("adapter driver is '$driverKind', not winusb")
-            if (-not $nextAction) { $nextAction = 'Run scripts\usb-driver.ps1 -Mode assign -Auto (UAC), then reboot if it reports reboot_required: true.' }
+            if (-not $nextAction) { $nextAction = 'Run scripts\usb-driver.ps1 -Mode assign -Auto (UAC); 2.0.2+ restarts the device itself, so reboot only if an older helper reports reboot_required: true.' }
         }
         if (-not $fwOk) {
-            $blockers.Add('firmware files missing or invalid')
+            $blockers.Add('firmware .bin files missing or invalid')
             if (-not $nextAction) { $nextAction = $fwFixAction }
         }
     }

@@ -11,11 +11,11 @@ internal Realtek RTL8852BU adapter (USB\VID_0BDA&PID_4853):
                         and end with the 51 04 FD 77 extension signature
   rtl8852bu_config.bin  config, empty or starting with 55 AB 23 87
 
-A2DPWB additionally looks for the same files without the .bin extension
-(rtl8852bu_fw / rtl8852bu_config), the names BTstack actually opens. This
-script downloads the .bin files from linux-firmware, validates the magic the
-project itself enforces, and creates the extension-less aliases (hardlink, or
-a copy when hardlinks are unavailable).
+A2DPWB 2.0.2+ uses the .bin files and does not need extension-less copies
+(the app removes identical ones on a scan; PR #97), so the
+default is to write only the two .bin files. Pass -LegacyAliases for 2.0.1 and
+older: those builds open rtl8852bu_fw / rtl8852bu_config, and this script then
+creates the aliases (hardlink, or a copy when hardlinks are unavailable).
 
 The script is idempotent: valid files already in place are kept, invalid ones
 are replaced. Every written file's SHA-256 is printed.
@@ -38,14 +38,25 @@ Per-request timeout in seconds.
 .PARAMETER Force
 Re-download even when a valid file is already present.
 
+.PARAMETER LegacyAliases
+Also create the extension-less copies (rtl8852bu_fw / rtl8852bu_config).
+Needed only for A2DPWB 2.0.1 and older. Off by default: 2.0.2+ uses the .bin
+files and removes identical copies on a scan.
+
 .PARAMETER DryRun
 Print what would be downloaded, validated and written; change nothing.
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1 -DryRun
+
+.EXAMPLE
 powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1
 
+.EXAMPLE
+powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1 -LegacyAliases
+
 .NOTES
+Targets A2DP-Windows-Bridge 2.0.2-beta.4 and newer.
 Exit codes: 0 success, 1 failure, 2 bad arguments.
 #>
 [CmdletBinding()]
@@ -60,6 +71,7 @@ param(
     ),
     [int]$TimeoutSec = 60,
     [switch]$Force,
+    [switch]$LegacyAliases,
     [switch]$DryRun
 )
 
@@ -225,13 +237,26 @@ try {
         }
     }
 
-    Write-Host 'Extension-less aliases BTstack opens:'
-    Install-Alias -Target $fwBin -Alias $fwAlias -Label 'firmware alias'
-    Install-Alias -Target $cfgBin -Alias $cfgAlias -Label 'config alias'
+    if ($LegacyAliases) {
+        Write-Host 'Extension-less aliases (2.0.1 and older, -LegacyAliases):'
+        Install-Alias -Target $fwBin -Alias $fwAlias -Label 'firmware alias'
+        Install-Alias -Target $cfgBin -Alias $cfgAlias -Label 'config alias'
+    }
+    else {
+        Write-Host 'Extension-less aliases: not written.'
+        Write-Host '  2.0.2+ uses rtl8852bu_fw.bin / rtl8852bu_config.bin; the extension-less copies are obsolete.'
+        $stale = @(@($fwAlias, $cfgAlias) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+        if ($stale.Count -gt 0) {
+            Write-Host ("  obsolete copies still present (not needed; the app removes identical ones on its next scan): " + ($stale -join ', '))
+        }
+        Write-Host '  use -LegacyAliases only when targeting 2.0.1 or older.'
+    }
 
     if (-not $DryRun) {
         Write-Host 'Result:'
-        foreach ($p in @($fwBin, $cfgBin, $fwAlias, $cfgAlias)) {
+        $expected = @($fwBin, $cfgBin)
+        if ($LegacyAliases) { $expected += @($fwAlias, $cfgAlias) }
+        foreach ($p in $expected) {
             $state = Get-FirmwareState -Path $p -Kind $(if ($p -like '*_fw*') { 'fw' } else { 'cfg' })
             $verdict = if ($state.Valid) { 'OK' } else { "INVALID ($($state.Reason))" }
             Write-Host ("  {0}  {1}  {2} bytes  SHA-256 {3}" -f $verdict, $p, $state.Length, $state.Sha256)

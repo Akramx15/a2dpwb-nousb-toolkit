@@ -4,29 +4,35 @@
 
 .DESCRIPTION
     This round prepares the missing-firmware case (a separate case from the
-    WinUSB binding, which only needs the device re-enumerated). With the four
-    firmware files absent, the 2.0.2+ beta names them ("firmware file missing"
+    WinUSB binding, which now re-enumerates itself in 2.0.2+). With the .bin
+    firmware files absent, 2.0.2+ names them ("firmware file missing"
     warnings). A ROM-mode module still serves HCI, so the adapter may open
     anyway; the open failure is not the expectation here. The script prepares
     the next reboot:
 
-      1. copies the four firmware files to a safe backup folder;
+      1. copies the firmware files that are present to a safe backup folder
+         (the two .bin files are required; obsolete extension-less copies are
+         backed up too when they exist);
       2. installs a self-deleting entry in the user's Startup folder;
-      3. removes the four firmware files from %APPDATA%\A2DPWB;
+      3. removes exactly the files it backed up from %APPDATA%\A2DPWB;
       4. schedules a reboot (shutdown /r /t 30).
 
     After the reboot and sign-in, the Startup entry runs:
 
-        cold-boot-test.ps1 -Mode Missing -Core <the beta> -Headset <devices.txt>
+        cold-boot-test.ps1 -Mode Missing -Core <the beta> -Headset <devices.txt> -OutputFile <output>
 
     and writes the output to
-    %USERPROFILE%\Documents\opencode\a2db\work\cold-boot-round2.txt. The test
-    names the missing files, restores the .bin files, checks that the beta
-    recreates the aliases and downloads the firmware, streams, then restores
-    all four files. The Startup entry deletes itself after the run.
+    %USERPROFILE%\Documents\opencode\a2db\work\cold-boot-round2.txt. The raw
+    app output of each phase is written next to it as
+    cold-boot-round2.txt.phase1.log, .phase2.log and .phase3.log. The test
+    names the missing files, restores the .bin files, checks that 2.0.2+ uses
+    the .bin files directly (no extension-less copies) and downloads the
+    firmware, streams, then restores the .bin files. The Startup entry deletes
+    itself after the run.
 
     Nothing is changed unless -Execute is given. -WhatIf (the default) only
-    prints this plan. -Abort cancels a pending reboot and restores the files.
+    prints this plan. -Abort cancels a pending reboot and restores the files
+    from the backup.
 
 .PARAMETER Core
     Path to the 2.0.2+ beta a2dpwb-core.exe. Default: the portable beta next
@@ -48,12 +54,14 @@
     Delay passed to shutdown /r /t. Default: 30.
 
 .PARAMETER OutputFile
-    Where the post-reboot test writes its output. Default:
+    Base path used by the Startup entry for the post-reboot test summary. The
+    raw per-phase logs are written next to it as <output>.phase1.log,
+    <output>.phase2.log and <output>.phase3.log. Default:
     %USERPROFILE%\Documents\opencode\a2db\work\cold-boot-round2.txt.
 
 .PARAMETER Abort
-    Cancel a pending reboot, remove the Startup entry and restore the four
-    firmware files from the backup.
+    Cancel a pending reboot, remove the Startup entry and restore the firmware
+    files present in the backup.
 
 .PARAMETER WhatIf
     Report the plan and change nothing (this is also the default).
@@ -72,6 +80,7 @@
     powershell -ExecutionPolicy Bypass -File scripts\cold-boot-round2.ps1 -Abort
 
 .NOTES
+    Targets A2DP-Windows-Bridge 2.0.2-beta.4 and newer.
     Exit codes: 0 success (or plan printed), 1 a step failed, 2 precondition.
 #>
 [CmdletBinding()]
@@ -91,9 +100,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:FirmwareNames = @('rtl8852bu_fw', 'rtl8852bu_config', 'rtl8852bu_fw.bin', 'rtl8852bu_config.bin')
+$script:BinaryNames = @('rtl8852bu_fw.bin', 'rtl8852bu_config.bin')
 $script:StartupDir = [Environment]::GetFolderPath('Startup')
 $script:StartupEntry = Join-Path $script:StartupDir 'a2dpwb-cold-boot-round2.cmd'
 $script:TestScript = Join-Path $PSScriptRoot 'cold-boot-test.ps1'
+$script:RemovedManifest = Join-Path $BackupDir 'removed-names.txt'
 
 function Write-Section { param([string]$Text) Write-Host ''; Write-Host "== $Text" -ForegroundColor Cyan }
 function Write-Step { param([string]$Text) Write-Host "   $Text" }
@@ -128,6 +139,11 @@ function Get-FirmwareFiles {
     return $found
 }
 
+function Get-PresentBins {
+    param([string]$Dir)
+    return @(Get-FirmwareFiles -Dir $Dir | Where-Object { $script:BinaryNames -contains (Split-Path -Leaf $_) })
+}
+
 function Copy-FirmwareToBackup {
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     $copied = @()
@@ -142,8 +158,9 @@ function Copy-FirmwareToBackup {
 }
 
 function Restore-FirmwareFromBackup {
+    param([string[]]$Names = $script:FirmwareNames)
     $restored = @()
-    foreach ($n in $script:FirmwareNames) {
+    foreach ($n in $Names) {
         $src = Join-Path $BackupDir $n
         if (-not (Test-Path -LiteralPath $src)) { continue }
         $dst = Join-Path $ConfigDir $n
@@ -200,14 +217,20 @@ if ($Abort) {
     if (Remove-StartupEntry) { Write-Step "startup entry removed: $script:StartupEntry" }
     else { Write-Step 'startup entry: none present' }
 
-    $restored = Restore-FirmwareFromBackup
+    $restoreNames = $script:FirmwareNames
+    if (Test-Path -LiteralPath $script:RemovedManifest -PathType Leaf) {
+        $restoreNames = @(Get-Content -LiteralPath $script:RemovedManifest |
+            Where-Object { $script:FirmwareNames -contains $_ })
+    }
+    $restored = Restore-FirmwareFromBackup -Names $restoreNames
     Write-Step ("firmware restored from ${BackupDir}: " + $(if ($restored.Count -gt 0) { $restored -join ', ' } else { 'nothing (backup missing or empty)' }))
-    $missing = @($script:FirmwareNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ConfigDir $_)) })
+    $missing = @($script:BinaryNames | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ConfigDir $_)) })
     if ($missing.Count -eq 0) {
-        Write-Host 'RESULT: reboot cancelled and all four firmware files are present.' -ForegroundColor Green
+        if (Test-Path -LiteralPath $script:RemovedManifest) { Remove-Item -LiteralPath $script:RemovedManifest -Force }
+        Write-Host 'RESULT: reboot cancelled and both .bin firmware files are present (2.0.2+).' -ForegroundColor Green
         exit 0
     }
-    Write-Host ("RESULT: files still missing after the restore: " + ($missing -join ', ')) -ForegroundColor Red
+    Write-Host ("RESULT: .bin files still missing after the restore: " + ($missing -join ', ')) -ForegroundColor Red
     Write-Host "Check $BackupDir; the backup may be incomplete."
     exit 1
 }
@@ -221,8 +244,13 @@ if (-not (Test-Path -LiteralPath $script:TestScript)) {
 
 if (-not $Core) {
     $betaCandidate = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\beta-2.0.2-beta.1\A2DPWB-2.0.2-beta.1\a2dpwb-core.exe'))
-    if (Test-Path -LiteralPath $betaCandidate) { $Core = $betaCandidate }
-    else { Fail-Precondition "the beta was not found at '$betaCandidate'; pass -Core with the 2.0.2+ binary." }
+    $installed = Join-Path $env:LOCALAPPDATA 'A2DP Windows Bridge\a2dpwb-core.exe'
+    if (Test-Path -LiteralPath $betaCandidate) { $Core = $betaCandidate; $coreSource = 'default: portable beta' }
+    elseif (Test-Path -LiteralPath $installed) { $Core = $installed; $coreSource = 'default: installed release' }
+    else { Fail-Precondition "no a2dpwb-core.exe found at '$betaCandidate' or '$installed'; pass -Core with the 2.0.2+ binary." }
+}
+else {
+    $coreSource = '-Core parameter'
 }
 if (-not (Test-Path -LiteralPath $Core)) { Fail-Precondition "a2dpwb-core.exe not found at '$Core'." }
 $Core = (Resolve-Path -LiteralPath $Core).Path
@@ -231,6 +259,7 @@ if (-not (Test-BetaVersion -Version $version)) {
     Fail-Precondition "'$Core' reports version '$version'; round 2 needs the 2.0.2+ beta."
 }
 Write-Step "core     : $Core"
+Write-Step "source   : $coreSource"
 Write-Step "version  : $(if ($version) { $version } else { 'unknown' }) [beta]"
 
 if (-not $Headset) {
@@ -247,40 +276,49 @@ if ($Headset -notmatch '^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$') { Fail-Preconditi
 Write-Step "headset  : $Headset"
 
 $present = @(Get-FirmwareFiles -Dir $ConfigDir)
-if ($present.Count -ne 4) {
-    Fail-Precondition ("round 2 needs all four firmware files, found {0}. Run -Abort first to restore them." -f $present.Count)
+$presentBins = @(Get-PresentBins -Dir $ConfigDir)
+if ($presentBins.Count -ne 2) {
+    Fail-Precondition ("round 2 needs both .bin firmware files, found {0}. Run -Abort first to restore them." -f $presentBins.Count)
 }
-Write-Step 'firmware : 4 of 4 present'
+$presentCopies = @($present | Where-Object { $script:BinaryNames -notcontains (Split-Path -Leaf $_) })
+Write-Step 'firmware : 2 of 2 .bin files present'
+if ($presentCopies.Count -gt 0) {
+    Write-Step ("copies   : {0} obsolete extension-less copy/copies present; they will be backed up and removed too" -f $presentCopies.Count)
+}
+else {
+    Write-Step 'copies   : none (2.0.2+ uses the .bin files; no copies are needed)'
+}
 
 $outputDir = Split-Path -Parent $OutputFile
 if (-not $outputDir) { Fail-Precondition "OutputFile '$OutputFile' has no parent folder." }
 Write-Step "output   : $OutputFile"
+Write-Step "raw logs : $OutputFile.phase1.log, $OutputFile.phase2.log, $OutputFile.phase3.log"
 Write-Step "backup   : $BackupDir"
 Write-Step "startup  : $script:StartupEntry"
 
 $startupContent = @(
     '@echo off',
     'rem Self-deleting A2DP-Windows-Bridge cold-boot round-2 probe.',
-    ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Missing -Core "{1}" -Headset "{2}" > "{3}" 2>&1' -f $script:TestScript, $Core, $Headset, $OutputFile),
+    ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Mode Missing -Core "{1}" -Headset "{2}" -OutputFile "{3}" > "{3}" 2>&1' -f $script:TestScript, $Core, $Headset, $OutputFile),
     'del /f /q "%~f0"'
 ) -join "`r`n"
 
 if (-not $Execute) {
     Write-Section 'Plan only - nothing was changed'
     Write-Step 'The script would:'
-    Write-Step "  1. copy the four firmware files to $BackupDir"
+    Write-Step "  1. copy the firmware files present (the two .bin at minimum) to $BackupDir"
     Write-Step "  2. write the self-deleting Startup entry $script:StartupEntry"
-    Write-Step '  3. remove rtl8852bu_fw, rtl8852bu_config, rtl8852bu_fw.bin, rtl8852bu_config.bin from the config folder'
+    Write-Step '  3. remove exactly the files it backed up from the config folder'
     Write-Step "  4. run: shutdown.exe /r /t $RebootDelaySeconds /c `"A2DP Windows Bridge cold-boot round 2`""
     Write-Host ''
     Write-Step 'Startup entry content:'
     foreach ($line in ($startupContent -split "`r?`n")) { Write-Step "  | $line" }
     Write-Host ''
     Write-Step 'After the reboot and sign-in the test will:'
-    Write-Step '  - expect the beta to name the missing files; on a ROM-mode module the adapter may still open'
-    Write-Step '  - restore the .bin files and expect the aliases, firmware download and adapter open'
+    Write-Step '  - expect the app to name the missing .bin files; on a ROM-mode module the adapter may still open'
+    Write-Step '  - restore the .bin files and expect 2.0.2+ to use them directly (no extension-less copies), download the firmware and open the adapter'
     Write-Step "  - stream for 20 s to $Headset and expect 0 dropped packets"
-    Write-Step '  - restore all four firmware files and write the output file'
+    Write-Step "  - restore the .bin files and write the output file; raw per-phase logs go next to it as $OutputFile.phase1.log, .phase2.log and .phase3.log"
     Write-Host ''
     Write-Step "To apply: run this script again with -Execute (the reboot is in $RebootDelaySeconds s; cancel with -Abort)."
     Write-Step 'To cancel a run that already started: -Abort (cancels the reboot and restores the files).'
@@ -292,9 +330,9 @@ Write-Section 'Execute - preparing the second cold-boot round'
 
 $copied = Copy-FirmwareToBackup
 Write-Step ("backup copied: " + ($copied -join ', '))
-$backupFiles = @(Get-FirmwareFiles -Dir $BackupDir)
-if ($backupFiles.Count -ne 4) {
-    Fail-Precondition ("the backup at {0} has {1} of 4 files; nothing was removed." -f $BackupDir, $backupFiles.Count)
+$backupBins = @(Get-PresentBins -Dir $BackupDir)
+if ($backupBins.Count -ne 2) {
+    Fail-Precondition ("the backup at {0} has {1} of 2 .bin files; nothing was removed." -f $BackupDir, $backupBins.Count)
 }
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
@@ -309,7 +347,7 @@ if ($installed -notmatch [regex]::Escape('-Mode Missing')) {
 }
 
 $removed = @()
-foreach ($n in $script:FirmwareNames) {
+foreach ($n in $copied) {
     $p = Join-Path $ConfigDir $n
     if (Test-Path -LiteralPath $p) {
         Remove-Item -LiteralPath $p -Force
@@ -318,11 +356,13 @@ foreach ($n in $script:FirmwareNames) {
 }
 Write-Step ("removed from the config folder: " + ($removed -join ', '))
 if (@(Get-FirmwareFiles -Dir $ConfigDir).Count -ne 0) {
-    Restore-FirmwareFromBackup | Out-Null
+    Restore-FirmwareFromBackup -Names $removed | Out-Null
     Remove-StartupEntry | Out-Null
     Write-Host 'ERROR: not all firmware files could be removed; the files were restored and the Startup entry removed.' -ForegroundColor Red
     exit 1
 }
+[System.IO.File]::WriteAllLines($script:RemovedManifest, [string[]]$removed, [System.Text.Encoding]::UTF8)
+Write-Step "removed-name manifest: $script:RemovedManifest"
 
 $previous = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -335,7 +375,7 @@ finally {
 }
 if ($shutdownCode -ne 0) {
     Write-Host "ERROR: shutdown /r failed (exit $shutdownCode): $shutdownOutput" -ForegroundColor Red
-    $restored = Restore-FirmwareFromBackup
+    $restored = Restore-FirmwareFromBackup -Names $removed
     Remove-StartupEntry | Out-Null
     Write-Host ("Rolled back: firmware restored ({0}); Startup entry removed." -f ($restored -join ', ')) -ForegroundColor Yellow
     exit 1
@@ -347,8 +387,9 @@ Write-Host 'WHAT TO EXPECT' -ForegroundColor Cyan
 Write-Step "The PC reboots in $RebootDelaySeconds seconds. Save your work now."
 Write-Step 'After you sign in, Windows runs the Startup entry automatically; it removes itself when done.'
 Write-Step "The test output appears in: $OutputFile"
-Write-Step 'The beta should name the missing rtl8852bu_fw.bin / rtl8852bu_config.bin; on a ROM-mode module the adapter may still open.'
-Write-Step 'Then it restores the .bin files, expects the aliases + firmware download, streams, and restores all four.'
+Write-Step "Raw per-phase app output: $OutputFile.phase1.log, .phase2.log, .phase3.log"
+Write-Step 'The app should name the missing rtl8852bu_fw.bin / rtl8852bu_config.bin; on a ROM-mode module the adapter may still open.'
+Write-Step 'Then it restores the .bin files, expects 2.0.2+ to use them directly (no extension-less copies) + firmware download, streams, and restores the .bin files.'
 Write-Host ''
 Write-Host 'TO CANCEL BEFORE THE REBOOT' -ForegroundColor Cyan
 Write-Step 'Run: powershell -ExecutionPolicy Bypass -File scripts\cold-boot-round2.ps1 -Abort'
