@@ -75,16 +75,41 @@ What 2.0.1 could not do was *name* the files, because `REALTEK_CHIPS` in
 PR #82 / 2.0.2-beta.1 adds the entry and prints
 `WARN firmware file missing: ...`, which is the right signal for this case.
 
-Reproduce: remove all four files (`rtl8852bu_fw`, `rtl8852bu_config`, both
-`.bin`) from `%APPDATA%\A2DPWB`, reboot, then run:
+At the time (beta.1), the reproduction removed all four files
+(`rtl8852bu_fw`, `rtl8852bu_config`, both `.bin`) from `%APPDATA%\A2DPWB`,
+rebooted, then ran:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\cold-boot-test.ps1 -Mode Missing
 ```
 
-Phase 1 is expected to open the adapter and print the two warnings. Phase 2
-restores the `.bin` files and expects the app to recreate the aliases and
-upload the firmware; the script restores all four files at the end.
+Phase 1 was expected to open the adapter and print the two warnings. Phase 2
+restored the `.bin` files and expected the app to recreate the aliases and
+upload the firmware; the script restored all four files at the end. The 2.0.2
+update below changes those expectations.
+
+## 2.0.2-beta.4 update: two mechanics above changed
+
+The causal account still holds - error 50 was the binding, and the missing
+firmware is a separate ROM-mode condition - but the handling changed in
+2.0.2-beta.4:
+
+* **Cause 1 is retired.** The app now restarts the device itself after the
+  WinUSB assign. The driver record reports `reboot_required: false`; verified on
+  this machine, the adapter opened immediately, the module went to ROM and the
+  app re-uploaded the firmware in the same run. No manual replug or reboot is
+  part of the expectation.
+* **Cause 2 is named and recoverable.** Missing firmware is printed per file
+  (`WARN firmware file missing: ...rtl8852bu_fw.bin`), surfaced as **Firmware
+  not loaded**, and 2.0.2+ can download it from linux-firmware itself (pinned
+  commit, SHA-256 checked).
+* **The phase-2 alias detail is obsolete.** 2.0.2+ uses the `.bin` files
+  directly and removes identical extension-less copies on a scan (PR #97). A
+  cold module with only the two `.bin` files uploads the firmware and streams;
+  no copies are created or needed. The cold-boot scripts now treat "copies
+  absent" as the correct 2.0.2+ result.
+
+Full change list and the verified observations: `docs/UPSTREAM-2.0.2.md`.
 
 ## Why the wrong cause was believable
 

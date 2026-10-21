@@ -12,9 +12,9 @@ time — not because the radio itself is special.
 **Streaming to the real headset is VERIFIED** (2026-10-19): classic A2DP, LDAC
 990 kbps, 0 dropped packets, heard by the user with no dropouts.
 
-**Current machine state (2026-10-20).** The installed app is
-**2.0.2-beta.1** (official NSIS installer, `currentUser`, installed over
-2.0.1), and the chip now resolves as `chip: RTL8852BU (0xB85B)`. **VB-CABLE is
+**Current machine state (2026-10-21).** The installed app is
+**2.0.2-beta.4** (official NSIS installer, `currentUser`, installed over
+2.0.1), and the chip now resolves as `chip: RTL8852BU (0BDA)`. **VB-CABLE is
 installed** (`CABLE Input` / `CABLE Output` / `CABLE In 16ch`) and the Windows
 default output is intentionally left on `CABLE Input` for headphones-only
 audio. One command puts the speakers back:
@@ -29,10 +29,14 @@ wrapper). While `CABLE Input` is the default and nothing streams it, **the PC
 has no sound at all** — that is the known footgun, documented at the top of
 `docs/HEADPHONES-ONLY.md`.
 
-### Upstream thread state (issue #81, updated 2026-10-20 16:40)
+### Upstream thread state (issue #81, recorded 2026-10-20 under beta.1)
 
 `https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/issues/81` — open, 5
-comments (1 from the maintainer, 4 from this account).
+comments (1 from the maintainer, 4 from this account). Since then
+**2.0.2-beta.4** shipped with #88 (self restart after assign), #92 (app-side
+firmware download), #94 (ROM detection) and #97 (extension-less copies
+obsolete); the beta.1 account below is kept as history, and the current
+behaviour is in `docs/UPSTREAM-2.0.2.md`.
 
 | What | State |
 |---|---|
@@ -59,7 +63,7 @@ the core's named pipe.
 
 | Fact | Evidence |
 |---|---|
-| Installed build | `2.0.2-beta.1` (NSIS, `currentUser`); `chip: RTL8852BU (0xB85B) (auto)` |
+| Installed build | `2.0.2-beta.4` (NSIS, `currentUser`); `chip: RTL8852BU (0BDA) (auto)` |
 | Adapter is USB, bound to WinUSB | `DEVPKEY_Device_Service = WINUSB`, `Status Started`, `ProblemCode 0` |
 | WinUSB opens the adapter | `INFO USB: opened 0BDA:4853 ... (event 0x81, ACL 0x82/0x02)` |
 | Controller is alive | `INFO controller: company 0x005D (Realtek), HCI version 11, LMP subversion 0xFD78` |
@@ -86,18 +90,16 @@ contains only the no-dongle toolkit and its documentation.
 **The blocker that was fixed:** `failed to initialize WinUSB (error 50)`. There
 were **two independent causes**, not one — full account in `docs/ROOT-CAUSE.md`.
 
-* **Error 50 was the WinUSB binding not being live yet.** The helper flags it at
-  assign time (the driver record says `"reboot_required": true` — the restart
+* **Error 50 was the WinUSB binding not being live yet.** The helper flagged it
+  at assign time (the driver record said `"reboot_required": true` — the restart
   flag `DiInstallDevice` returns, `app/src/crates/win-sys/src/driver.rs:442`),
-  so the binding is not live on the running device node until Windows
-  re-enumerates it. A successful assign does not re-enumerate by itself;
-  `uninstall_and_reenumerate` (`driver.rs:359`) is the restore path. The first
-  scan 7 s after the
-  assign failed with error 50; the same adapter opened as soon as the device was
-  re-enumerated, with no other change. Upstream's own remedy for an adapter that
-  does not answer is "Unplug the adapter, plug it back in and try again"
-  (`docs/usage.md:472`); `usb-driver.ps1 -Mode restart` does the same in
-  software.
+  so the binding was not live on the running device node until Windows
+  re-enumerated it; `uninstall_and_reenumerate` (`driver.rs:359`) is the restore
+  path, not the assign path. On beta.1 the first scan 7 s after the assign failed
+  with error 50 and the same adapter opened as soon as the device was
+  re-enumerated. **Since 2.0.2 the helper restarts the device itself**
+  (`reboot_required: false`) and error 50 is retired; `usb-driver.ps1` now says
+  so. Historical detail: `docs/ROOT-CAUSE.md`.
 * **The missing Realtek firmware was a separate, second issue.** Without it the
   module stays in ROM mode — the chip is not patched — but the adapter still
   opens and serves HCI from ROM (measured on a cold module after a real reboot,
@@ -105,10 +107,11 @@ were **two independent causes**, not one — full account in `docs/ROOT-CAUSE.md
   `0x4853`; upstream fixed that with PR #82 / 2.0.2-beta.1, whose
   `firmware file missing: ...` warnings are the right signal for this case.
   Install `rtl8852bu_fw.bin` (129,733 B) and `rtl8852bu_config.bin` (6 B) into
-  `%APPDATA%\A2DPWB`, plus the extension-less aliases `rtl8852bu_fw` /
-  `rtl8852bu_config` that BTstack reads; no reboot, no Administrator rights and
-  no driver change are needed for that.
-  Cold-boot round 2 added the decisive detail: on the unpatched module the
+  `%APPDATA%\A2DPWB`; no reboot, no Administrator rights and no driver change
+  are needed for that. 2.0.2+ uses the `.bin` files and does not need the
+  extension-less copies (`-LegacyAliases` exists only for 2.0.1); the app
+  removes identical copies on a scan. Cold-boot round 2 added the decisive
+  detail: on the unpatched module the
   **A2DP stream does not establish** (no `state Streaming: Connected`, no
   `Sent ...` line) even though the adapter opened; restoring only the `.bin`
   files made the same cold module upload the firmware and stream with 0
@@ -133,12 +136,17 @@ this ("the first time is the test, then it just works").
 
 ## Done
 
-* Toolkit repo (`work/a2dpwb-nousb`) with eight PowerShell 5.1 scripts, two
+* Toolkit repo (`work/a2dpwb-nousb`) with nine PowerShell 5.1 scripts, two
   verified upstream patches, the operating manual, the build-from-source guide
   and the decision records.
-* `scripts/doctor.ps1` — read-only state report + verdict.
-* `scripts/fetch-realtek-fw.ps1` — validated firmware download (magic bytes) +
-  extension-less aliases.
+* `scripts/doctor.ps1` — read-only state report + verdict; reports the
+  inspected app version and treats `.bin` as required, copies as optional on
+  2.0.2+.
+* `scripts/fetch-realtek-fw.ps1` — validated firmware download (magic bytes);
+  writes only the two `.bin` files unless `-LegacyAliases` is passed for 2.0.1.
+* `scripts/cold-boot-test.ps1` / `scripts/cold-boot-round2.ps1` — cold-module
+  checks with adaptive 2.0.1/2.0.2 expectations, exact backup/restore and raw
+  per-phase logs.
 * `scripts/usb-driver.ps1` — wraps `a2dpwb-driver.exe` (assign/restore) and
   `pnputil /restart-device`; its CLI syntax was read from
   `upstream/app/src/driver/src/main.rs`, not guessed.
@@ -205,9 +213,11 @@ The goal is met. These are improvements, not blockers. (The former item
    revert command (also the current state of this PC's default output).
 6. `docs/UNPATCHED-MODULE.md` — the cold-boot finding and its reproduction.
 7. `docs/ROOT-CAUSE.md` — the two independent causes with their evidence.
-8. `scripts/doctor.ps1` — single source of truth for current state.
-9. `docs/BUILD-FOR-SOURCE.md` — only if a build becomes necessary.
-10. Upstream reference (read-only): `upstream/app/src/core/src/cli.rs` (every
+8. `docs/UPSTREAM-2.0.2.md` — what changed in 2.0.2-beta.4 and the measured
+   firmware behaviour.
+9. `scripts/doctor.ps1` — single source of truth for current state.
+10. `docs/BUILD-FOR-SOURCE.md` — only if a build becomes necessary.
+11. Upstream reference (read-only): `upstream/app/src/core/src/cli.rs` (every
     flag the launcher uses), `upstream/app/src/driver/src/main.rs` (helper CLI),
     `upstream/app/src/crates/bt-host/src/chips.rs` (chip table),
     `upstream/app/src/crates/core/src/adapter.rs` (the `chip:` log line).

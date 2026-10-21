@@ -10,6 +10,13 @@ build — not a general claim about every Realtek controller. The mechanism
 (ROM code serves HCI; firmware patches the controller) is how BTstack's Realtek
 driver works, but the streaming failure below was measured here only.
 
+> **2.0.2-beta.4 update.** The alias detail below is beta.1 behaviour.
+> 2.0.2+ uses the `.bin` files and removes identical extension-less copies on a
+> scan (PR #97), so the current scripts expect no aliases and restore only the
+> two `.bin` files. The
+> ROM-mode observation itself still holds; the current evidence is in
+> `docs/UPSTREAM-2.0.2.md`.
+
 ## What happens
 
 A real Windows reboot with all four firmware files removed from
@@ -105,8 +112,10 @@ PR #82: 2.0.1 printed `chip: unknown (0x4853)` and could not name them
    aliases recreated, adapter opened.
 7. Expected phase 3: the LDAC stream runs with 0 dropped packets.
 
-The script restores all four files from `%APPDATA%\A2DPWB-coldboot-backup` at
-the end; verify with `Get-ChildItem %APPDATA%\A2DPWB\rtl8852bu*`.
+The beta.1 script restored all four files from
+`%APPDATA%\A2DPWB-coldboot-backup` at the end; the current scripts restore only
+the `.bin` files on 2.0.2+ (`-LegacyAliases` remains for 2.0.1). Verify with
+`Get-ChildItem %APPDATA%\A2DPWB\rtl8852bu*`.
 
 ## What it means for the user experience
 

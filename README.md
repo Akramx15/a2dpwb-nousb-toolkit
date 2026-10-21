@@ -1,6 +1,6 @@
 # A2DP-Windows-Bridge without a USB dongle (internal RTL8852BU)
 
-Operating manual for running **A2DP-Windows-Bridge 2.0.2-beta.1** on this PC
+Operating manual for running **A2DP-Windows-Bridge 2.0.2-beta.4** on this PC
 using only its **internal** Bluetooth radio
 (`USB\VID_0BDA&PID_4853\00E04C0000XX`, Realtek **RTL8852BU**). No external USB
 dongle is bought.
@@ -10,17 +10,19 @@ Toolkit layout (this repo):
 | Path | What it is |
 |:--|:--|
 | `scripts/stream.ps1` | **Daily-use launcher**: streams to the headphones with the installed core |
-| `scripts/fetch-realtek-fw.ps1` | Downloads + validates the Realtek firmware into the A2DPWB config folder |
+| `scripts/fetch-realtek-fw.ps1` | Downloads + validates the Realtek firmware into the A2DPWB config folder; 2.0.2+ writes only the `.bin` files (`-LegacyAliases` for 2.0.1) |
 | `scripts/usb-driver.ps1` | Wraps `a2dpwb-driver.exe` (assign / restore) and `pnputil` (restart) |
 | `scripts/run-emulator.ps1` | Zero-hardware end-to-end run against the Bumble virtual sink |
-| `scripts/doctor.ps1` | Read-only diagnosis + verdict |
-| `scripts/cold-boot-test.ps1` | Three-phase cold-boot check of the Realtek firmware path (run after a Windows reboot) |
+| `scripts/doctor.ps1` | Read-only diagnosis + verdict; reports the inspected app version and the firmware layout it implies |
+| `scripts/cold-boot-test.ps1` | Three-phase cold-boot check of the Realtek firmware path (run after a Windows reboot); writes raw `<output>.phaseN.log` files |
+| `scripts/cold-boot-round2.ps1` | Prepares the next reboot for the missing-firmware case, backs up/removes exactly the files it found, restores them; `-WhatIf` (default), `-Execute`, `-Abort` |
 | `scripts/set-default-audio.ps1` | Lists the render endpoints and sets the Windows default output (IPolicyConfig); `-List`, `-Device`, `-Restore`, `-WhatIf` |
 | `scripts/copy-diagnostics.ps1` | Reads the app's **Copy Diagnostics** text over the core's IPC pipe, without the GUI; `-Masked` (default), `-Full`, `-Output` |
 | `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app — **superseded by upstream PR #82** (2.0.2-beta.1); kept for 2.0.1 source builds only |
 | `vendor-patches/` | The patched copies the diffs were generated from |
 | `docs/HEADPHONES-ONLY.md` | **Headphones-only routing through VB-CABLE**: the full recipe, the verified evidence and the one-command revert |
 | `docs/UNPATCHED-MODULE.md` | **An unpatched module opens the adapter but cannot stream**: reproduction and what it means for the user |
+| `docs/UPSTREAM-2.0.2.md` | **2.0.1 -> 2.0.2-beta.4 changes**: no error-50 path, family-wide PID resolution, named/self-fetched firmware, obsolete extension-less copies |
 | `docs/` | Build-from-source guide, decisions (ADRs), the root-cause account and the drafted upstream issue |
 
 `../upstream/` is the read-only reference clone of v2.0.1. **Never edit or
@@ -52,23 +54,29 @@ in `docs/ROOT-CAUSE.md`.
 embeds BTstack, whose licence does not allow commercial use or redistribution
 without a BlueKitchen licence.
 
-## Verified working on this PC (2026-10-19 / 2026-10-20)
+## Verified working on this PC (2026-10-19 / 2026-10-21)
 
 Real hardware, real radio, classic A2DP over the internal RTL8852BU. This is
 the current, verified result — not a plan.
 
 | Check | Evidence |
 |:--|:--|
-| Build | **2.0.2-beta.1**, official NSIS installer, `currentUser` mode (no administrator rights) |
+| Build | **2.0.2-beta.4**, official NSIS installer, `currentUser` mode (no administrator rights) |
 | Device | the headset, `<HEADSET_MAC>`, classic A2DP (LE Audio switched **off** on the headset) |
-| Chip | `chip: RTL8852BU (0xB85B)` (2.0.1 said `chip: unknown (0x4853)`) |
+| Chip | `chip: RTL8852BU (0BDA)` (2.0.1 said `chip: unknown (0x4853)`) |
 | Codec discovery | `remote supports LDAC (SEID 3, [2D, 01, 00, 00, AA, 00, 3C, 07])` → `codec selected: LDAC` |
 | Codec setup | `LDAC: initialized (rate=48000, ch=2, 24-bit, quality=High, transport mtu=895, bitrate=990 kbps)` |
 | State | `state Streaming: Connected` |
 | 40 s test tone | `Sent 7507 media packets (5052211 bytes), 0 dropped` |
 | 25 s system loopback | `Sent 4701 media packets (3163773 bytes), 0 dropped` |
+| Cold module, only `.bin` files (2.0.2-beta.4) | `Realtek firmware download ran (ROM LMP subversion 0x8852)`; `Sent 3765 media packets ... 0 dropped`; no extension-less copies created (`docs/UPSTREAM-2.0.2.md`) |
 | User confirmation | A song played on the PC came out of the headphones **and** the PC speakers, excellent quality, no dropouts |
 | Headphones-only routing | `CABLE Input` as default output + virtual capture: `Sent 3789 media packets (2549997 bytes), 0 dropped before the radio`, speakers silent — `docs/HEADPHONES-ONLY.md` |
+
+The toolkit currently targets **2.0.2-beta.4**. The table records the beta.1
+streaming runs plus the beta.4 cold-module run; beta.4 keeps the streaming
+result and removes the manual re-enumeration and file-copy steps (see
+`docs/UPSTREAM-2.0.2.md`).
 
 ### Daily use: one command
 
@@ -230,7 +238,8 @@ Known limitation of v2.0.1: the app's own chip table
 the UI/log says `chip: unknown (0x4853)`. The `patches/` in this repo fix
 that name so the UI advises the correct firmware files. BTstack itself does
 not need the app table: it already loads `rtl8852bu_fw`. The installed
-**2.0.2-beta.1** resolves it on this PC: `chip: RTL8852BU (0xB85B) (auto)`.
+**2.0.2-beta.4** resolves it on this PC:
+`chip: RTL8852BU (0BDA:4853 -> 0xB85B) (auto)`.
 
 **The patches here are superseded by upstream.** PR
 [SeiyaFunaokaJP/A2DP-Windows-Bridge#82](https://github.com/SeiyaFunaokaJP/A2DP-Windows-Bridge/pull/82)
@@ -247,7 +256,7 @@ Setup state; the verified streaming result is in the top section.
 | Item | Value |
 |:--|:--|
 | Adapter instance | `USB\VID_0BDA&PID_4853\00E04C0000XX` |
-| Installed app | **2.0.2-beta.1** (installed over 2.0.1 with the official NSIS installer, `currentUser`, no admin) |
+| Installed app | **2.0.2-beta.4** (installed over 2.0.1 with the official NSIS installer, `currentUser`, no admin) |
 | Current driver | `winusb.inf` / service `WINUSB` (WinUSB Device) |
 | Previous driver (recorded) | `oem197.inf`, Realtek, service `BTHUSB`, `reboot_required: true` |
 | WinUSB open result | **opens** (the former `failed to initialize WinUSB (error 50)` was the binding not being live; it cleared once the device was re-enumerated) |
@@ -256,15 +265,17 @@ Setup state; the verified streaming result is in the top section.
 | App binaries | `a2dpwb-core.exe`, `a2dpwb-driver.exe`, `a2dpwb.exe` present |
 | Toolchain | Rust 1.97, Node 24; **no MSVC C++ compiler** in `C:\BuildTools`; no `pnpm`; no `pwsh` |
 
-`failed to initialize WinUSB (error 50)` is `ERROR_NOT_SUPPORTED`, but it does
-not mean the driver or the firmware is wrong: the WinUSB binding is simply not
-live yet. The helper records `reboot_required: true` at assign time and
-re-enumerates the device; the adapter opens as soon as that has happened
-(unplug/replug, `usb-driver.ps1 -Mode restart`, or a reboot). The firmware is a
-**separate** requirement: it patches the controller out of ROM mode. A cold,
-unpatched module still opens the adapter and serves HCI from its ROM code — so
-"the adapter cannot open" must never be read as "the firmware is missing".
-`docs/ROOT-CAUSE.md` carries the evidence for both.
+`failed to initialize WinUSB (error 50)` is `ERROR_NOT_SUPPORTED`, but it did
+not mean the driver or the firmware was wrong: the WinUSB binding was simply
+not live yet. In 2.0.1 the helper recorded `reboot_required: true` at assign
+time and the device had to be re-enumerated. **2.0.2-beta.4 restarts the device
+itself**: the record now says `reboot_required: false`, the adapter opens
+immediately, the module goes to ROM and the app re-uploads the firmware. The
+firmware remains a **separate** requirement: it patches the controller out of
+ROM mode. A cold, unpatched module still opens the adapter and serves HCI from
+its ROM code — so "the adapter cannot open" must never be read as "the firmware
+is missing". `docs/ROOT-CAUSE.md` carries the historical evidence;
+`docs/UPSTREAM-2.0.2.md` records the current behaviour.
 
 ## 5. Recovery: give the adapter back to Windows
 
@@ -291,7 +302,7 @@ pending reboot.
 ```powershell
 # 1. the headphones' MAC is auto-discovered by stream.ps1; to see it by hand,
 #    use Windows Settings > Bluetooth, or: a2dpwb-core.exe --cli -l
-# 2. take the adapter (UAC); reboot if it reports reboot_required: true
+# 2. take the adapter (UAC); 2.0.2+ restarts it itself after the assign
 powershell -ExecutionPolicy Bypass -File scripts\usb-driver.ps1 -Mode assign -Auto
 
 # 3. run the UI, the launcher, or the core CLI directly
@@ -318,8 +329,14 @@ powershell -ExecutionPolicy Bypass -File scripts\fetch-realtek-fw.ps1           
 
 Creates, in `%APPDATA%\A2DPWB` (override with `-ConfigDir`):
 
-* `rtl8852bu_fw.bin`, `rtl8852bu_config.bin` (validated magic) and the
-  extension-less aliases `rtl8852bu_fw` / `rtl8852bu_config` BTstack opens.
+* `rtl8852bu_fw.bin` and `rtl8852bu_config.bin` (validated magic).
+* On 2.0.1 only, `-LegacyAliases` additionally creates the extension-less
+  copies `rtl8852bu_fw` / `rtl8852bu_config` that older builds open.
+
+2.0.2+ uses the `.bin` files and removes identical extension-less copies on a
+scan, so the script does not create them by default. The app can also download
+the firmware itself from linux-firmware (pinned commit, SHA-256 checked); this
+script remains the offline/controlled path.
 
 Validation mirrors `chips.rs`: firmware starts with `Realtech` / `RTBTCore`
 and ends with `51 04 FD 77`; config is empty or starts `55 AB 23 87`.
@@ -360,26 +377,33 @@ powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1
 ```
 
 Read-only. Exit code `0` = verdict OK, `1` = BLOCKED (the printed "Next
-action" is the one thing to do), `2` = the doctor itself failed.
+action" is the one thing to do), `3` = STALE (no live probe and no decisive log
+marker; run the doctor with the live probe while A2DPWB is stopped), `2` = the
+doctor itself failed.
 
 ## 10. Known blockers
 
 1. **No MSVC C++ compiler.** `C:\BuildTools` lacks the "Desktop development
    with C++" workload (`cl.exe` absent), so any `cargo build` of the C parts
-   fails. The happy path uses the installed v2.0.1 binaries; see
+   fails. The happy path uses the installed 2.0.2-beta.4 binaries; see
    `docs/BUILD-FOR-SOURCE.md` before building.
-2. **WinUSB error 50 after a fresh `assign`.** The binding is not live yet — the
-   record says `reboot_required: true`. Unplug/replug, run
-   `usb-driver.ps1 -Mode restart`, or reboot before expecting a stream. This is
-   not a firmware symptom (see `docs/ROOT-CAUSE.md`). On this PC the adapter is
-   past that state and LDAC is verified.
-3. **Firmware version.** The firmware currently installed is shape-valid but
+2. **WinUSB error 50 after a fresh `assign` (historical).** On 2.0.1 the
+   binding was not live until Windows re-enumerated the device and the record
+   said `reboot_required: true`. 2.0.2-beta.4 restarts the device itself after
+   the assign (`reboot_required: false`), so no manual unplug/reboot is part of
+   the expectation. A `true` value now points at a stale helper record. This was
+   never a firmware symptom (see `docs/ROOT-CAUSE.md`,
+   `docs/UPSTREAM-2.0.2.md`).
+3. **Firmware files.** 2.0.2+ needs only `rtl8852bu_fw.bin` and
+   `rtl8852bu_config.bin`; extension-less copies are obsolete and the app
+   removes identical ones on a scan (a warm scan does not create them).
+   The firmware currently installed is shape-valid but
    not the exact build the toolkit's mirrors serve; if you want the mirror
    build, re-run `fetch-realtek-fw.ps1 -Force`, then restart the adapter.
-   Without any `rtl8852bu_fw` / `rtl8852bu_config` the module stays in ROM mode
-   (unpatched); it still opens and serves HCI, so the missing files do not
-   produce `error 50`, but **the A2DP stream does not establish** — the
-   `firmware file missing` warning is the decisive signal
+   Without the `.bin` files the module stays in ROM mode (unpatched); it still
+   opens and serves HCI, so the missing files do not produce `error 50`, but
+   **the A2DP stream does not establish** — the `firmware file missing` warning
+   and the "Firmware not loaded" state are the decisive signals
    (`docs/UNPATCHED-MODULE.md`).
 4. **`pnpm` and PowerShell 7 missing.** Needed only for the UI build and
    `build.ps1`; the core and the emulator do not need them.
@@ -395,8 +419,10 @@ action" is the one thing to do), `2` = the doctor itself failed.
 
 * `assign` / `restore` need UAC; they are safe to re-run (the helper is
   idempotent and records the previous driver).
-* `fetch-realtek-fw.ps1` is idempotent; valid files are kept, invalid ones
-  replaced, and every SHA-256 is printed.
+* `fetch-realtek-fw.ps1` is idempotent; it writes only the two `.bin` files by
+  default (2.0.2+ removes identical extension-less copies on a scan), keeps
+  valid files, replaces invalid ones, and prints every SHA-256. Pass
+  `-LegacyAliases` only when targeting 2.0.1 or older.
 * `set-default-audio.ps1` changes where **every** app plays, for the current
   user, and prints the plan first with `-WhatIf`. With `CABLE Input` as the
   default the PC is silent while nothing streams it; keep the `-Restore`
