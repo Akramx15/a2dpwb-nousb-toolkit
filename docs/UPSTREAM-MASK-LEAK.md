@@ -121,3 +121,59 @@ The masked line reads:
 it masks the addresses, the USB serial and the other instance ids, and it
 refuses to write an archive in which any identifier survives. The bug above
 is upstream's, and it is why the script exists.
+
+## The fix, merged upstream - verified on the real bundle
+
+Upstream picked the report up and shipped it in three PRs, all credited to
+issue #81:
+
+| PR | what |
+|---|---|
+| #141 | "Mask an address that a colon follows" - the guard of this document's patch, in upstream's own words: *"reported by @Akramx15 (who also sent a patch for the same guard)"* |
+| #146 | a full audit of everything that goes into the bundle: device names, the Windows user name, and the LE keys (LTK / IRK / CSRK / the derived link key) that BTstack's info log prints |
+| #147 | the OUI point of the report: every address becomes `<addr-N>`, the adapter's own `<adapter>` - *"Nothing of the address stays: its first three octets name the maker (the OUI), and so the model."* |
+
+The masking code of the merged state was taken out of
+`app/src/crates/core/src/diag.rs`, compiled as it is (`rustc`, edition 2024)
+and run over the **pre-scrub** archive of this issue - the bundle as the app
+wrote it. The masker is seeded the way `app/src/core/src/bundle.rs` seeds it
+(`masker.know(n); masker.know(&d.name); masker.know_adapter(&a);`).
+
+| identifier | in the bundle as written | after the merged mask |
+|---|---|---|
+| the adapter's USB serial | 19 | **0** |
+| the user profile path | 436 | **0** |
+| the device name (`the headset`) | 14 | **0** |
+| the profile name | 40 | **0** |
+| the full headset address | 0 (the app's own mask) | 0 |
+| the colon case | the full address, twice | `<addr-2>: pairing (Just Works)` |
+
+The masked line now reads:
+
+```
+2026-10-19 22:40:59.133  INFO bt_host::le::core: LE Audio: <addr-2>: pairing (Just Works)
+```
+
+## The one thing that still survives
+
+The new masker knows the real address forms. It does **not** know the
+**previous** mask's own output, `AA:BB:CC:xx:xx:xx`:
+
+| in the bundle as written | after the merged mask |
+|---|---|
+| `58:18:62:xx:xx:xx` (the headset's OUI, the old mask's form) | 180 - **unchanged** |
+| `46:62:99:xx:xx:xx` (the other device's OUI) | 29 - **unchanged** |
+
+A bundle that holds **log files written by an older build** keeps the OUI in
+those lines, because the old form is not an address any more and the new
+masker passes it through. In a bundle written entirely by the new build the
+form never appears (the live mask writes `<addr-N>`), so this only shows up
+when the bundle carries history - which is the normal case, because the
+bundle ships the whole log folder.
+
+The fix is one more form in the mask: treat `AA:BB:CC:xx:xx:xx` (and the
+`-` variant) as an address, so it becomes `<addr-N>` like the rest.
+
+The reproduction is in `scripts/check-merged-mask.ps1` (it needs the masking
+block of upstream's `diag.rs` and `rustc`; the harness it builds is
+`mask-harness.rs`).
