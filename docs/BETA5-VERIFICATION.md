@@ -98,6 +98,15 @@ and the adapter's USB serial in 19 lines. It was re-scrubbed; the file in this
 repository is the corrected one. The other evidence in this document is
 unaffected.
 
+Those identifiers were in the archive because of an **upstream** bug, not a
+mistake in the collection: the bundle of **Diagnostics > Report a problem >
+Save** masks the text files it bundles with `mask_addresses`, which only knew
+`AA:BB:CC:DD:EE:FF` and refused an address that was followed by a colon - the
+exact shape of the two LE Audio pairing lines. Upstream fixed most of it in
+commit `a4ce19d` (PR #134) after the report on issue #81; the two lines above
+still leak with that fix. `docs/UPSTREAM-MASK-LEAK.md` has the analysis and a
+verified patch.
+
 Its `logs/a2dpwb-core.2026-10-21.log` contains the whole day, so beta.4's
 misleading line and beta.5's correct ones sit next to each other:
 

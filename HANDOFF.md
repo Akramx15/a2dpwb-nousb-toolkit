@@ -182,6 +182,17 @@ this ("the first time is the test, then it just works").
   which any identifier survives. The published bundle in `docs/evidence/` was
   re-scrubbed with it; the correction to the upstream issue is
   `issuecomment-6327168792` on `SeiyaFunaokaJP/A2DP-Windows-Bridge#81`.
+* **Upstream fixed the mask leak** — commit `a4ce19d` (PR #134, "Mask USB
+  serial numbers and more address forms in diagnostics", 2026-10-21 23:32Z),
+  pushed after our report; the maintainer replied at 00:05Z and promised to
+  check it thoroughly. The fix is on `develop-v2.x` and **in no release yet**
+  (the newest is `v2.0.2-beta.5`, which predates it).
+* `docs/UPSTREAM-MASK-LEAK.md` + `patches/0003-diag-mask-address-before-colon.patch`
+  — the two lines of #81's own bundle (the LE Audio pairing lines, where the
+  address is followed by a colon) still survive upstream's fix. Verified with
+  upstream's own code compiled with `rustc` against the pre-scrub archive:
+  upstream `a4ce19d` = 2 leaks, with the patch = 0, and upstream's three mask
+  tests still pass.
 
 ## Blocked
 

@@ -189,6 +189,27 @@ ROM state (`Realtek firmware NOT loaded (... rtl8852bu_fw.bin missing in ...)`).
 * A diagnostic bundle can be written from **Diagnostics > Report a problem >
   Save**; the core also writes one itself when it stops.
 
+### After beta.5: the diagnostics mask leak (issue #81)
+
+The bundle above runs its text files through the mask, and in beta.5 the mask
+was incomplete: it wrote the headset's full Bluetooth address and the
+adapter's USB serial into the archive. Our report on #81 (2026-10-21 21:40Z)
+was followed by upstream commit `a4ce19d` (PR #134, 2026-10-21 23:32Z), which
+masks USB serials and more address forms, and by the maintainer's reply at
+00:05Z.
+
+Two things to know:
+
+* the fix is on `develop-v2.x` and **in no release yet** - `v2.0.2-beta.5`
+  itself still leaks;
+* the two lines that leaked in the bundle of #81 still leak with `a4ce19d`,
+  because the address there is followed by a colon.
+
+`docs/UPSTREAM-MASK-LEAK.md` has the details and a verified patch
+(`patches/0003-diag-mask-address-before-colon.patch`). Until a release has
+the fix, `scripts/scrub-diagnostics.ps1` is what keeps the published archive
+clean.
+
 ### How to look at the firmware folder
 
 ```

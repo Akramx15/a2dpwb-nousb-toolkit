@@ -19,11 +19,12 @@ Toolkit layout (this repo):
 | `scripts/set-default-audio.ps1` | Lists the render endpoints and sets the Windows default output (IPolicyConfig); `-List`, `-Device`, `-Restore`, `-WhatIf` |
 | `scripts/copy-diagnostics.ps1` | Reads the app's **Copy Diagnostics** text over the core's IPC pipe, without the GUI; `-Masked` (default), `-Full`, `-Output` |
 | `scripts/scrub-diagnostics.ps1` | Removes the device identifiers from a diagnostic bundle before publishing it: Bluetooth addresses, the adapter's USB serial, other USB instance ids; refuses to write if anything survives |
-| `patches/` | Unified diffs that name PID `0x4853` as `RTL8852BU` in the app — **superseded by upstream PR #82** (2.0.2-beta.1); kept for 2.0.1 source builds only |
+| `patches/` | Unified diffs: `0001`/`0002` name PID `0x4853` as `RTL8852BU` in the app — **superseded by upstream PR #82** (2.0.2-beta.1); kept for 2.0.1 source builds only. `0003` masks a Bluetooth address that is followed by a colon in the diagnostics — **not upstreamed yet** (`docs/UPSTREAM-MASK-LEAK.md`) |
 | `vendor-patches/` | The patched copies the diffs were generated from |
 | `docs/HEADPHONES-ONLY.md` | **Headphones-only routing through VB-CABLE**: the full recipe, the verified evidence and the one-command revert |
 | `docs/UNPATCHED-MODULE.md` | **An unpatched module opens the adapter but cannot stream**: reproduction and what it means for the user |
 | `docs/UPSTREAM-2.0.2.md` | **2.0.1 -> 2.0.2-beta.5 changes**: no error-50 path, family-wide PID resolution, named/self-fetched firmware, obsolete extension-less copies, the firmware folder, the ROM state |
+| `docs/UPSTREAM-MASK-LEAK.md` | **The diagnostics mask leak of upstream #81**: where the identifiers survived, what upstream's fix (`a4ce19d`) covers, the case it still misses, and a verified patch |
 | `docs/` | Build-from-source guide, decisions (ADRs), the root-cause account and the drafted upstream issue |
 
 `../upstream/` is the read-only reference clone of v2.0.1. **Never edit or
